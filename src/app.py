@@ -510,21 +510,19 @@ def handle_message(msg, user_id):
                 return
 
             if onboarding == 1:
-                # 等昵称
-                import re
-                m = re.search(r'叫我(.+)', content)
-                if not m:
-                    m = re.search(r'我叫(.+)', content)
-                if not m:
-                    m = re.search(r'我是(.+)', content)
-                if not m and len(content) <= 10:
-                    # 直接输入名字
-                    nickname = content
-                else:
-                    nickname = m.group(1).strip() if m else content.strip()
-
-                # 清理昵称（去掉标点）
-                nickname = re.sub(r'[。，！？～~.!?,]', '', nickname).strip()
+                # 等昵称 — 用模型提取，能处理各种自然表达
+                from brain import call_llm
+                extract_prompt = (
+                    "用户在设置昵称，请从下面这句话中提取出用户希望被称呼的昵称。\n"
+                    "只返回昵称本身，不要任何解释、引号或标点。\n"
+                    "如果无法识别，返回空。\n\n"
+                    f"用户说：{content}"
+                )
+                nickname = call_llm(
+                    [{"role": "user", "content": extract_prompt}],
+                    model_tier="flash", max_tokens=20, temperature=0
+                )
+                nickname = (nickname or "").strip().strip('"\'""''')
                 if not nickname:
                     send_wework_message(user_id, "没听清名字呢，再说一次？直接打名字就行~")
                     return
