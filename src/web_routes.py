@@ -198,8 +198,10 @@ def api_notes(user_id=None):
             continue
         header = lines[0].strip()
         content = "\n".join(lines[1:]).strip()
-        if content == "---":
-            content = ""
+        # 去掉尾部的分隔线 ---
+        if content.endswith("---"):
+            content = content[:-3].strip()
+
 
         # 日期筛选
         if date_filter and not header.startswith(date_filter):
