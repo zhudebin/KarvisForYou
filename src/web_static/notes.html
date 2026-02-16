@@ -6,7 +6,7 @@
 <title>Karvis · 速记</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script async src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
 <script>
 tailwind.config = { theme: { extend: { colors: {
   warm: { 50:'#fdf8f6',100:'#f2e8e5',200:'#eaddd7',300:'#e0cfc7',400:'#d2bab0',500:'#bfa094',600:'#a18072',700:'#977669',800:'#846358',900:'#43302b' }
@@ -85,7 +85,12 @@ function notesApp() {
         this.offset = this.notes.length;
       } catch(e) { console.error(e); }
     },
-    renderMd(text) { return text ? marked.parse(text) : ''; }
+    renderMd(text) {
+      if (!text) return '';
+      if (typeof marked !== 'undefined' && marked.parse) return marked.parse(text);
+      // marked 未加载时简单转义换行
+      return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>');
+    }
   }
 }
 </script>
