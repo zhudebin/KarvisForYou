@@ -43,6 +43,34 @@ def set_nickname(params, state, ctx):
     }
 
 
+def set_ai_name(params, state, ctx):
+    """
+    给 AI 起昵称（用户说"我叫你XX"、"你叫XX"、"以后叫你XX"时触发）。
+    区别于 set_nickname（设置用户自己的昵称）。
+    """
+    ai_name = params.get("ai_name", "").strip()
+    if not ai_name:
+        return {"success": False, "reply": "没听清你想叫我什么，再说一次？"}
+
+    config = ctx.get_user_config()
+    config["ai_name"] = ai_name
+    ctx.save_user_config(config)
+
+    _log(f"[Settings] 用户 {ctx.user_id} 给AI起名: {ai_name}")
+
+    return {
+        "success": True,
+        "reply": f"好呀，以后我就是「{ai_name}」啦~",
+        "memory_updates": [
+            {
+                "section": "关键偏好",
+                "action": "upsert",
+                "content": f"用户给 Karvis 起了昵称「{ai_name}」，喜欢被叫这个名字"
+            }
+        ]
+    }
+
+
 def set_soul(params, state, ctx):
     """
     设置 AI 人格风格覆写。
@@ -133,6 +161,7 @@ def set_info(params, state, ctx):
 
 SKILL_REGISTRY = {
     "settings.nickname": set_nickname,
+    "settings.ai_name": set_ai_name,
     "settings.soul": set_soul,
     "settings.info": set_info,
 }

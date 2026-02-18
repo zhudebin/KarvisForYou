@@ -312,6 +312,9 @@ def build_system_prompt(state, ctx, prompt_futs=None):
     nickname = ctx.get_nickname()
     if nickname:
         soul += f"\n- 称呼用户为「{nickname}」"
+    ai_name = ctx.get_user_config().get("ai_name", "")
+    if ai_name:
+        soul += f"\n- 用户给你起了昵称「{ai_name}」，在合适的时候可以用这个名字自称"
 
     return f"""{soul}
 
@@ -781,7 +784,7 @@ _SIMPLE_SKILLS = frozenset({
     "book.create", "book.excerpt", "book.thought", "book.summary", "book.quotes",
     "media.create", "media.thought",
     "mood.generate", "voice.journal",
-    "settings.nickname", "settings.soul", "settings.info",
+    "settings.nickname", "settings.ai_name", "settings.soul", "settings.info",
     "web.token",
     "habit.propose", "habit.nudge", "habit.status", "habit.complete",
     "decision.record", "dynamic",
@@ -796,7 +799,7 @@ _SKIP_NOTE_SKILLS = frozenset({
     "book.create", "book.excerpt", "book.thought", "book.summary", "book.quotes",
     "media.create", "media.thought",
     "web.token",
-    "settings.nickname", "settings.soul", "settings.info",
+    "settings.nickname", "settings.ai_name", "settings.soul", "settings.info",
     "deep.dive",
 })
 

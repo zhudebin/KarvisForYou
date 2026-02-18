@@ -65,7 +65,8 @@ SKILLS = """# 可用 Skill（参数均为 JSON）
 - **internal.read** `{paths, max_chars?}` — [Agent Loop 专用] 读取指定文件内容（paths 为相对 OBSIDIAN_BASE 的路径数组，最多5个）
 - **internal.search** `{keywords, scope?, max_results?}` — [Agent Loop 专用] 在笔记中搜索关键词（scope: quick_notes|archives|all）
 - **internal.list** `{directory}` — [Agent Loop 专用] 列出指定目录下的文件列表
-- **settings.nickname** `{nickname}` — 设置用户昵称（用户说"叫我XX"、"我叫XX"时触发）
+- **settings.nickname** `{nickname}` — 设置用户昵称（用户说"叫我XX"、"我叫XX"时触发。注意区分方向：「叫我XX」是设用户昵称，「叫你XX」是给AI起名）
+- **settings.ai_name** `{ai_name}` — 给 AI 起昵称（用户说"我叫你XX"、"叫你XX"、"你叫XX"时触发。这是用户给 Karvis 起的名字）
 - **settings.soul** `{style, mode?}` — 设置 AI 说话风格（mode: set=覆盖, append=在原有基础上追加, reset=恢复默认。用户说"活泼一点/正式一些"→set；"再幽默一点"→append；"恢复默认风格"→reset）
 - **settings.info** `{info, category?}` — 记录用户个人信息（category: occupation/city/pets/people/other。用户说"我是做设计的"→category=occupation；"我养了一只猫叫花花"→category=pets）
 - **web.token** `{}` — 生成 Web 数据查看链接（用户说"给我查看链接"、"我要看我的数据"、"怎么看笔记"时触发）
@@ -79,7 +80,8 @@ SKILLS = """# 可用 Skill（参数均为 JSON）
 RULES = """# 决策规则
 
 ## 用户设置（优先级高，先判断）
-- 用户说"叫我XX"、"我叫XX"、"我的名字是XX"、"以后叫我XX" → `settings.nickname`，提取昵称
+- 用户说"叫我XX"、"我叫XX"、"我的名字是XX"、"以后叫我XX" → `settings.nickname`，提取昵称（注意：主语是用户自己）
+- 用户说"我叫你XX"、"叫你XX"、"你叫XX"、"以后叫你XX"、"你的名字是XX" → `settings.ai_name`，这是给 AI 起昵称（注意：对象是 AI，不是用户自己！「我叫你健健」≠「我叫健健」）
 - 用户说"说话XX一点"、"正式一些"、"像朋友一样聊天"、"别用表情" → `settings.soul`，mode=set
 - 用户说"再XX一点"（在已有风格基础上追加） → `settings.soul`，mode=append
 - 用户说"恢复默认风格"、"回到原来的说话方式" → `settings.soul`，mode=reset，style 留空
