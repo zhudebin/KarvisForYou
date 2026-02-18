@@ -106,7 +106,6 @@ def api_auth_verify():
 @require_auth
 def api_dashboard(user_id=None):
     """GET /api/dashboard — 仪表盘概览数据"""
-    _log(f"[WebAPI] /api/dashboard: user={user_id}")
     ctx = _get_ctx(user_id)
 
     result = {
@@ -193,7 +192,6 @@ def api_dashboard(user_id=None):
 @require_auth
 def api_notes(user_id=None):
     """GET /api/notes — 获取速记"""
-    _log(f"[WebAPI] /api/notes: user={user_id}")
     ctx = _get_ctx(user_id)
     date_filter = request.args.get("date", "")
 
@@ -243,7 +241,6 @@ def api_notes(user_id=None):
 @require_auth
 def api_todos(user_id=None):
     """GET /api/todos — 获取待办"""
-    _log(f"[WebAPI] /api/todos: user={user_id}")
     ctx = _get_ctx(user_id)
 
     todo = _read_file_safe(ctx.todo_file)
@@ -264,7 +261,6 @@ def api_todos(user_id=None):
 @require_auth
 def api_daily_list(user_id=None):
     """GET /api/daily — 获取日记/周报/月报列表"""
-    _log(f"[WebAPI] /api/daily: user={user_id}")
     ctx = _get_ctx(user_id)
 
     reports = []
@@ -303,7 +299,6 @@ def api_daily_list(user_id=None):
 @require_auth
 def api_daily_detail(filename, user_id=None):
     """GET /api/daily/{filename} — 获取日记详情"""
-    _log(f"[WebAPI] /api/daily/{filename}: user={user_id}")
     ctx = _get_ctx(user_id)
 
     # 检测 emotion/ 前缀，路由到情绪日记目录
@@ -330,7 +325,6 @@ def api_daily_detail(filename, user_id=None):
 @require_auth
 def api_archive_list(user_id=None):
     """GET /api/archive — 获取归档笔记列表"""
-    _log(f"[WebAPI] /api/archive: user={user_id}")
     ctx = _get_ctx(user_id)
     category = request.args.get("category", "")
 
@@ -400,7 +394,6 @@ def api_archive_detail(filename, user_id=None):
 @require_auth
 def api_mood(user_id=None):
     """GET /api/mood — 获取情绪数据"""
-    _log(f"[WebAPI] /api/mood: user={user_id}")
     ctx = _get_ctx(user_id)
 
     state = _read_state_safe(ctx)
@@ -423,7 +416,6 @@ def api_mood(user_id=None):
 @require_auth
 def api_memory(user_id=None):
     """GET /api/memory — 获取长期记忆（结构化解析 memory.md）"""
-    _log(f"[WebAPI] /api/memory: user={user_id}")
     ctx = _get_ctx(user_id)
 
     content = _read_file_safe(ctx.memory_file)
@@ -471,7 +463,6 @@ def api_memory(user_id=None):
 @require_auth
 def api_books(user_id=None):
     """GET /api/books — 获取读书笔记"""
-    _log(f"[WebAPI] /api/books: user={user_id}")
     ctx = _get_ctx(user_id)
 
     books = []
@@ -489,7 +480,6 @@ def api_books(user_id=None):
 @require_auth
 def api_media(user_id=None):
     """GET /api/media — 获取影视笔记"""
-    _log(f"[WebAPI] /api/media: user={user_id}")
     ctx = _get_ctx(user_id)
 
     items = []

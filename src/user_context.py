@@ -401,7 +401,6 @@ def verify_token(token: str) -> dict:
         return {"valid": False}
 
     user_id = token_data.get("user_id", "")
-    _log(f"[Tokens] 令牌验证成功: {token[:8]}... → user={user_id}")
     return {"valid": True, "user_id": user_id}
 
 

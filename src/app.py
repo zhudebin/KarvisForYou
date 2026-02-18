@@ -49,13 +49,22 @@ import brain
 
 app = Flask(__name__)
 
-# 过滤健康检查日志，避免 Nginx/Docker 的 GET / 刷屏
+# 过滤 Web 页面/API 读请求的 HTTP 访问日志，只保留业务日志和错误
 import logging
-class _HealthCheckFilter(logging.Filter):
+class _QuietWebFilter(logging.Filter):
     def filter(self, record):
         msg = record.getMessage()
-        return '"GET / ' not in msg and '"GET /health' not in msg
-logging.getLogger('werkzeug').addFilter(_HealthCheckFilter())
+        # 过滤健康检查
+        if '"GET / ' in msg or '"GET /health' in msg:
+            return False
+        # 过滤 Web 静态页面、API 读请求、favicon
+        if '"GET /web/' in msg or '"GET /api/' in msg or 'favicon' in msg:
+            return False
+        # 过滤 auth verify（前端每次页面加载都会调）
+        if '"POST /api/auth/verify' in msg:
+            return False
+        return True
+logging.getLogger('werkzeug').addFilter(_QuietWebFilter())
 
 # 注册 Web 路由 Blueprint
 from web_routes import web_bp, api_bp
