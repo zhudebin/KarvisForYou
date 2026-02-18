@@ -327,7 +327,10 @@ def _read_tokens() -> dict:
     try:
         if os.path.exists(TOKENS_FILE):
             with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if "tokens" not in data:
+                    data["tokens"] = {}
+                return data
     except Exception as e:
         _log(f"[Tokens] 读取令牌表失败: {e}")
     return {"tokens": {}}
