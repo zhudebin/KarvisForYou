@@ -510,11 +510,20 @@ def process(payload, send_fn=None, ctx=None):
 
     registry = _get_skill_registry()
 
-    # 7. 所有用户消息统一写入 Quick-Notes（原始流水记录）
-    #    system 类型、打卡回答除外
+    # 7. Quick-Notes 两阶段过滤（V-Web-01）
+    #    Stage 1: 规则预筛 — 已由 Skill handler 结构化处理的消息直接跳过
+    #    Stage 2: Flash 后判 — 回复发出后异步调 Flash 判断是否值得写入
     primary_skill = _get_primary_skill(decision)
+    _pending_note_filter = False  # 是否需要 Flash 后判
     if payload.get("type") != "system" and primary_skill not in ("checkin.answer", "checkin.skip", "checkin.cancel", "checkin.start"):
-        _save_to_quick_notes(payload, state, ctx)
+        if primary_skill in _SKIP_NOTE_SKILLS:
+            _log(f"[Brain][NoteFilter] 规则跳过: skill={primary_skill}")
+        elif primary_skill == "note.save":
+            # 用户明确要求记录，直接写入
+            _save_to_quick_notes(payload, state, ctx)
+        else:
+            # 需要 Flash 后判（在回复发送后异步执行）
+            _pending_note_filter = True
 
     # 8. 执行 Steps（支持单步旧格式 + 多步 steps 格式）
     steps, step_results = _execute_steps(decision, state, registry, ctx)
@@ -580,6 +589,10 @@ def process(payload, send_fn=None, ctx=None):
             _log(f"[Brain] 回复已先行发送，开始后台保存")
         except Exception as e:
             _log(f"[Brain] 先行发送失败: {e}")
+
+    # V-Web-01: 回复发出后异步 Flash 过滤 Quick-Notes
+    if _pending_note_filter:
+        _executor.submit(_flash_filter_and_save, payload, state, ctx, primary_skill)
 
     # V8: 更新用户节奏画像（纯数据收集，不影响回复）
     try:
@@ -774,6 +787,19 @@ _SIMPLE_SKILLS = frozenset({
     "decision.record", "dynamic",
 })
 
+# ── 速记智能过滤：规则预筛跳过集合（V-Web-01）──
+# 这些 skill 的消息已由对应 handler 结构化处理，无需重复写入 Quick-Notes
+_SKIP_NOTE_SKILLS = frozenset({
+    "todo.add", "todo.done", "todo.list",
+    "habit.propose", "habit.nudge", "habit.status", "habit.complete",
+    "decision.record", "decision.review", "decision.list",
+    "book.create", "book.excerpt", "book.thought", "book.summary", "book.quotes",
+    "media.create", "media.thought",
+    "web.token",
+    "settings.nickname", "settings.soul", "settings.info",
+    "deep.dive",
+})
+
 
 def _get_primary_skill(decision):
     """从 decision 中提取主 skill 名称（兼容 steps 和旧格式）"""
@@ -928,6 +954,27 @@ def _save_to_quick_notes(payload, state, ctx):
             note_save.execute({"content": content, "attachment": attachment}, state, ctx)
     except Exception as e:
         _log(f"[Brain] Quick-Notes 统一写入失败（不影响主流程）: {e}")
+
+def _flash_filter_and_save(payload, state, ctx, primary_skill):
+    """回复后异步执行：用 Flash 判断消息是否值得写入 Quick-Notes（V-Web-01）"""
+    text = _extract_user_text(payload)
+    if not text or not text.strip():
+        return
+    try:
+        result = call_llm([
+            {"role": "system", "content": prompts.FLASH_NOTE_FILTER},
+            {"role": "user", "content": text}
+        ], model_tier="flash", max_tokens=5, temperature=0)
+        should_save = result and result.strip().upper().startswith("YES")
+        if should_save:
+            _save_to_quick_notes(payload, state, ctx)
+            _log(f"[Brain][NoteFilter] Flash判断写入: skill={primary_skill}, text={text[:40]}...")
+        else:
+            _log(f"[Brain][NoteFilter] Flash判断跳过: skill={primary_skill}, text={text[:40]}...")
+    except Exception as e:
+        _log(f"[Brain][NoteFilter] Flash判断失败，兜底写入: {e}")
+        _save_to_quick_notes(payload, state, ctx)
+
 
 def _extract_user_text(payload):
     """从 payload 中提取用户文本（用于短期记忆）"""

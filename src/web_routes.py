@@ -174,6 +174,18 @@ def api_dashboard(user_id=None):
     except Exception:
         result["latest_daily"] = None
 
+    # 记忆概要（section 数量 + 总条目数）
+    try:
+        mem_content = _read_file_safe(ctx.memory_file)
+        if mem_content:
+            mem_sections = [p for p in re.split(r'\n(?=## )', mem_content) if p.strip().startswith("## ")]
+            mem_items = len([l for l in mem_content.split('\n') if l.strip().startswith("- ")])
+            result["memory_summary"] = {"sections": len(mem_sections), "items": mem_items}
+        else:
+            result["memory_summary"] = None
+    except Exception:
+        result["memory_summary"] = None
+
     return jsonify(result)
 
 
@@ -294,17 +306,24 @@ def api_daily_detail(filename, user_id=None):
     _log(f"[WebAPI] /api/daily/{filename}: user={user_id}")
     ctx = _get_ctx(user_id)
 
-    # 安全检查：防止路径穿越
-    filename = os.path.basename(filename)
-    if not filename.endswith(".md"):
-        filename += ".md"
+    # 检测 emotion/ 前缀，路由到情绪日记目录
+    if filename.startswith("emotion/"):
+        safe_name = os.path.basename(filename)
+        if not safe_name.endswith(".md"):
+            safe_name += ".md"
+        filepath = os.path.join(ctx.emotion_notes_dir, safe_name)
+    else:
+        # 安全检查：防止路径穿越
+        safe_name = os.path.basename(filename)
+        if not safe_name.endswith(".md"):
+            safe_name += ".md"
+        filepath = os.path.join(ctx.daily_notes_dir, safe_name)
 
-    filepath = os.path.join(ctx.daily_notes_dir, filename)
     content = _read_file_safe(filepath)
     if not content:
         return jsonify({"error": "文件不存在"}), 404
 
-    return jsonify({"content": content, "filename": filename})
+    return jsonify({"content": content, "filename": safe_name})
 
 
 @api_bp.route("/archive", methods=["GET"])
@@ -398,6 +417,54 @@ def api_mood(user_id=None):
         })
 
     return jsonify({"scores": scores, "diaries": diaries})
+
+
+@api_bp.route("/memory", methods=["GET"])
+@require_auth
+def api_memory(user_id=None):
+    """GET /api/memory — 获取长期记忆（结构化解析 memory.md）"""
+    _log(f"[WebAPI] /api/memory: user={user_id}")
+    ctx = _get_ctx(user_id)
+
+    content = _read_file_safe(ctx.memory_file)
+    if not content:
+        return jsonify({"sections": [], "total_items": 0, "last_updated": ""})
+
+    # 按 ## 标题分段
+    _SECTION_ICONS = {
+        "用户画像": "👤", "重要的人": "👥", "偏好": "💡",
+        "近期关注": "🔍", "重要事件": "📌", "工作": "💼",
+        "习惯": "🔄", "健康": "🏥", "财务": "💰",
+    }
+    sections = []
+    total_items = 0
+    parts = re.split(r'\n(?=## )', content)
+    for part in parts:
+        part = part.strip()
+        if not part.startswith("## "):
+            continue
+        lines = part.split("\n")
+        title = lines[0].replace("## ", "").strip()
+        items = [l.lstrip("- ").strip() for l in lines[1:] if l.strip().startswith("- ")]
+        if not items:
+            # 非列表段落也保留
+            body = "\n".join(lines[1:]).strip()
+            if body:
+                items = [body]
+        icon = _SECTION_ICONS.get(title, "📋")
+        total_items += len(items)
+        sections.append({"title": title, "icon": icon, "items": items})
+
+    # 获取文件修改时间
+    last_updated = ""
+    try:
+        if os.path.exists(ctx.memory_file):
+            mtime = os.path.getmtime(ctx.memory_file)
+            last_updated = datetime.fromtimestamp(mtime, _BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+
+    return jsonify({"sections": sections, "total_items": total_items, "last_updated": last_updated})
 
 
 @api_bp.route("/books", methods=["GET"])
@@ -570,6 +637,11 @@ def web_archive():
 @web_bp.route("/mood")
 def web_mood():
     return _serve_page("mood.html")
+
+
+@web_bp.route("/memory")
+def web_memory():
+    return _serve_page("memory.html")
 
 
 @web_bp.route("/admin")

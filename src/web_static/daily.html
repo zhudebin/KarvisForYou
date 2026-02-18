@@ -80,7 +80,7 @@ function dailyApp() {
     reports: [], loading: true, tab: 'all', detail: null, detailHtml: '',
     tabs: [
       {key:'all',label:'全部'},{key:'daily',label:'日报'},
-      {key:'weekly',label:'周报'},{key:'mood',label:'情绪'}
+      {key:'weekly',label:'周报'},{key:'monthly',label:'月报'},{key:'mood',label:'情绪'}
     ],
     get filtered() {
       if (this.tab === 'all') return this.reports;
@@ -97,12 +97,20 @@ function dailyApp() {
       this.loading = false;
     },
     async openDetail(report) {
+      this.detail = report;
+      this.detailHtml = '<p class="text-warm-400 text-center py-8">加载中...</p>';
       try {
         const r = await fetch(`/api/daily/${encodeURIComponent(report.file)}`, {headers: API_HEADERS()});
         const d = await r.json();
-        this.detail = report;
+        if (d.error) {
+          this.detailHtml = `<p class="text-red-400 text-center py-8">${d.error}</p>`;
+          return;
+        }
         this.detailHtml = marked.parse(d.content || '');
-      } catch(e) { console.error(e); }
+      } catch(e) {
+        this.detailHtml = '<p class="text-red-400 text-center py-8">加载失败</p>';
+        console.error(e);
+      }
     }
   }
 }
