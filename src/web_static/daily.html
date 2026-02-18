@@ -48,7 +48,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
         </div>
       </div>
     </template>
-    <p x-show="!filtered.length" class="text-center text-warm-400 py-8">暂无日记</p>
+    <div x-show="!filtered.length" class="text-center py-16">
+      <p class="text-4xl mb-3">📖</p>
+      <p class="text-warm-600 font-medium">还没有日记</p>
+      <p class="text-warm-400 text-sm mt-1">Karvis 会在每晚自动帮你生成日报和情绪日记</p>
+      <p class="text-warm-400 text-xs mt-3">💡 多和 Karvis 聊天，日记会更丰富哦~</p>
+    </div>
   </div>
 
   <!-- 详情视图 -->

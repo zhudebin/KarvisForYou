@@ -57,7 +57,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
           <p class="text-xs text-warm-400" x-text="d.date"></p>
         </div>
       </template>
-      <p x-show="!diaries.length" class="text-center text-warm-400 py-4">暂无情绪日记</p>
+      <div x-show="!diaries.length && !scores.length" class="text-center py-12">
+        <p class="text-4xl mb-3">🌈</p>
+        <p class="text-warm-600 font-medium">还没有情绪记录</p>
+        <p class="text-warm-400 text-sm mt-1">Karvis 每晚会根据你的聊天自动生成情绪日记</p>
+        <p class="text-warm-400 text-xs mt-3">💡 试试说：「今天心情不太好」</p>
+      </div>
+      <p x-show="!diaries.length && scores.length" class="text-center text-warm-400 py-4">暂无情绪日记</p>
     </div>
   </div>
 

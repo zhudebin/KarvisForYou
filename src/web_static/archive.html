@@ -43,7 +43,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
         </div>
       </div>
     </template>
-    <p x-show="!notes.length" class="text-center text-warm-400 py-8">暂无笔记</p>
+    <div x-show="!notes.length" class="text-center py-16">
+      <p class="text-4xl mb-3">📁</p>
+      <p class="text-warm-600 font-medium">还没有笔记</p>
+      <p class="text-warm-400 text-sm mt-1">你的聊天会被 Karvis 自动归档到这里</p>
+      <p class="text-warm-400 text-xs mt-3">💡 试试说：「记录一下今天的读书心得」</p>
+    </div>
   </div>
 
   <div class="p-4" x-show="detail">

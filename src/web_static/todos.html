@@ -54,7 +54,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
         </template>
       </div>
     </template>
-    <p x-show="!pending.length && !done.length" class="text-center text-warm-400 py-8">暂无待办</p>
+    <div x-show="!pending.length && !done.length" class="text-center py-16">
+      <p class="text-4xl mb-3">📋</p>
+      <p class="text-warm-600 font-medium">还没有待办事项</p>
+      <p class="text-warm-400 text-sm mt-1">在企微告诉 Karvis 你要做的事就好</p>
+      <p class="text-warm-400 text-xs mt-3">💡 试试说：「提醒我明天买猫粮」</p>
+    </div>
   </div>
 
   <div x-show="loading" class="flex items-center justify-center h-64">
