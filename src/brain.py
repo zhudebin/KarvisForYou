@@ -407,27 +407,24 @@ def _select_rules(state, payload=None):
 
     user_text = (payload.get("text", "") if payload else "").lower() if payload else ""
 
-    # 读书/影视：state 中有 active_book/active_media 或关键词
+    # 读书/影视：仅关键词触发（去掉 state 持久字段避免每条消息都注入）
     _BOOKS_KW = ("看了", "读了", "推荐", "这本书", "书摘", "金句", "总结一下",
                  "在读", "在看", "电影", "剧", "纪录片", "动画", "影视")
-    if state.get("active_book") or state.get("active_media") or \
-       any(kw in user_text for kw in _BOOKS_KW):
+    if any(kw in user_text for kw in _BOOKS_KW):
         segments.append(prompts.RULES_BOOKS_MEDIA)
 
-    # 习惯/Top3：state 中有活跃实验 或 daily_top3 或关键词
+    # 习惯/Top3：仅关键词触发
     _HABITS_KW = ("实验", "习惯", "top 3", "top3", "今天要做", "今天的目标",
                   "今天最重要")
-    if state.get("active_experiment") or state.get("daily_top3") or \
-       any(kw in user_text for kw in _HABITS_KW):
+    if any(kw in user_text for kw in _HABITS_KW):
         segments.append(prompts.RULES_HABITS)
 
-    # 高级功能：语音长度/决策/深潜/agent loop 关键词
+    # 高级功能：语音 + 关键词触发（去掉 pending_decisions state 触发）
     _ADV_KW = ("要不要", "纠结", "犹豫", "决定了", "决策", "复盘",
                "回顾", "分析", "梳理", "深潜", "盘点", "之前写过",
                "帮我看看", "文件里")
     is_voice = payload.get("type") == "voice" if payload else False
-    if is_voice or state.get("pending_decisions") or \
-       any(kw in user_text for kw in _ADV_KW):
+    if is_voice or any(kw in user_text for kw in _ADV_KW):
         segments.append(prompts.RULES_ADVANCED)
 
     return segments
