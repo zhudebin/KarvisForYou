@@ -14,7 +14,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import (
     DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL,
     QWEN_API_KEY, QWEN_BASE_URL, QWEN_MODEL, QWEN_VL_MODEL,
-    CHECKIN_TIMEOUT_SECONDS, SCHEDULER_RHYTHM_WINDOW
+    CHECKIN_TIMEOUT_SECONDS, SCHEDULER_RHYTHM_WINDOW,
+    ADMIN_USER_ID, ALERT_SLOW_THRESHOLD, ALERT_SLOW_CONSECUTIVE,
+    ALERT_COOLDOWN_SECONDS,
 )
 from storage import IO as OneDriveIO  # 统一存储接口
 from memory import (
@@ -29,6 +31,68 @@ _executor = ThreadPoolExecutor(max_workers=6)
 
 def _log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+# ============ 管理员告警推送 ============
+
+_alert_state = {
+    "slow_count": 0,           # 连续慢请求计数
+    "last_alert_time": {},     # {alert_type: timestamp} 同类告警冷却
+}
+
+
+def _send_admin_alert(alert_type, message):
+    """
+    向管理员推送企微告警消息。
+    支持冷却机制：同类告警 ALERT_COOLDOWN_SECONDS 内不重复发送。
+    """
+    if not ADMIN_USER_ID:
+        _log(f"[Alert] 未配置 ADMIN_USER_ID，跳过告警: {alert_type}")
+        return
+
+    now = _time.time()
+    last = _alert_state["last_alert_time"].get(alert_type, 0)
+    if now - last < ALERT_COOLDOWN_SECONDS:
+        _log(f"[Alert] 冷却中，跳过: {alert_type} (距上次{now - last:.0f}s)")
+        return
+
+    try:
+        from app import send_wework_message
+        ok = send_wework_message(ADMIN_USER_ID, f"🚨 Karvis 告警\n\n{message}")
+        if ok:
+            _alert_state["last_alert_time"][alert_type] = now
+            _log(f"[Alert] 已推送: {alert_type}")
+        else:
+            _log(f"[Alert] 推送失败: {alert_type}")
+    except Exception as e:
+        _log(f"[Alert] 推送异常: {e}")
+
+
+def _check_and_alert(elapsed, user_id, skill, user_text, error=None):
+    """
+    请求完成后检查是否需要告警。
+    支持：慢请求（连续N次 > 阈值）、Traceback/异常。
+    """
+    # 1. 慢请求检测
+    if elapsed > ALERT_SLOW_THRESHOLD:
+        _alert_state["slow_count"] += 1
+        if _alert_state["slow_count"] >= ALERT_SLOW_CONSECUTIVE:
+            _send_admin_alert("slow_request",
+                f"⏱ 连续 {_alert_state['slow_count']} 次慢请求 (>{ALERT_SLOW_THRESHOLD}s)\n"
+                f"最新: {elapsed:.1f}s\n"
+                f"用户: {user_id}\n"
+                f"技能: {skill}\n"
+                f"输入: {(user_text or '')[:50]}")
+    else:
+        _alert_state["slow_count"] = 0  # 重置连续计数
+
+    # 2. 异常告警
+    if error:
+        _send_admin_alert("error",
+            f"❌ 处理异常\n"
+            f"用户: {user_id}\n"
+            f"错误: {str(error)[:200]}\n"
+            f"输入: {(user_text or '')[:50]}")
 
 
 # ============ LLM 用量日志 ============
@@ -607,6 +671,12 @@ def process(payload, send_fn=None, ctx=None):
     _save_state_and_memory(state, decision, payload=payload, reply=reply, elapsed=t_save_start - t_start, ctx=ctx)
     t_end = _time.time()
     _log(f"[Brain][耗时] 保存state: {t_end - t_save_start:.1f}s | 总计: {t_end - t_start:.1f}s")
+
+    # 11. 异步告警检测（不阻塞返回）
+    total_elapsed = t_end - t_start
+    _executor.submit(_check_and_alert, total_elapsed, user_id,
+                     _get_primary_skill(decision) if decision else "unknown",
+                     user_text, None)
 
     return {"reply": reply, "already_sent": bool(send_fn and reply)}
 

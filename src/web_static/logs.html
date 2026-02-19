@@ -23,6 +23,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .log-area::-webkit-scrollbar-track { background: #1e293b; }
 .log-area::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
 .latency-bar { height: 22px; border-radius: 4px; min-width: 2px; transition: width 0.3s; }
+.detail-panel { animation: slideDown 0.15s ease-out; }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body class="p-4" x-data="logsApp()" x-init="init()">
@@ -48,23 +50,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
       </div>
     </div>
 
-    <!-- 主 Tab 切换：日志 / 统计 -->
+    <!-- 主 Tab 切换 -->
     <div class="flex rounded-lg overflow-hidden border border-warm-200 w-fit">
       <button @click="mainTab='logs'"
         :class="mainTab==='logs' ? 'bg-warm-700 text-white' : 'bg-white text-warm-600 hover:bg-warm-50'"
-        class="px-4 py-2 text-sm font-medium transition">
-        日志
-      </button>
+        class="px-4 py-2 text-sm font-medium transition">日志</button>
       <button @click="mainTab='stats'; loadStats()"
         :class="mainTab==='stats' ? 'bg-warm-700 text-white' : 'bg-white text-warm-600 hover:bg-warm-50'"
-        class="px-4 py-2 text-sm font-medium transition">
-        统计监控
-      </button>
+        class="px-4 py-2 text-sm font-medium transition">统计监控</button>
+      <button @click="mainTab='errors'; loadStats()"
+        :class="mainTab==='errors' ? 'bg-warm-700 text-white' : 'bg-white text-warm-600 hover:bg-warm-50'"
+        class="px-4 py-2 text-sm font-medium transition">错误聚合</button>
     </div>
 
     <!-- ==================== 日志面板 ==================== -->
     <div x-show="mainTab==='logs'" class="space-y-4">
-      <!-- 工具栏 -->
       <div class="bg-white rounded-xl p-4 shadow-sm">
         <div class="flex flex-wrap items-center gap-3">
           <div class="flex rounded-lg overflow-hidden border border-warm-200">
@@ -106,7 +106,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
           <span x-show="lastFetch" x-text="'上次刷新: ' + lastFetch"></span>
         </div>
       </div>
-      <!-- 日志区域 -->
       <div class="bg-gray-900 rounded-xl shadow-sm overflow-hidden">
         <div x-ref="logArea" class="log-area p-4 overflow-auto" style="height: calc(100vh - 320px); min-height: 400px;">
           <div x-show="loading" class="text-gray-400 text-sm text-center py-8">加载中...</div>
@@ -129,7 +128,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
       <div x-show="!statsLoading && stats" class="space-y-4">
 
         <!-- 汇总卡片 -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div class="bg-white rounded-xl p-4 shadow-sm">
             <p class="text-xs text-warm-500">今日 Token</p>
             <p class="text-xl font-bold text-warm-800" x-text="fmtNum(stats?.token?.today?.total || 0)"></p>
@@ -138,6 +137,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
           <div class="bg-white rounded-xl p-4 shadow-sm">
             <p class="text-xs text-warm-500">今日成本</p>
             <p class="text-xl font-bold text-warm-800" x-text="'¥' + (stats?.token?.today_cost || 0).toFixed(4)"></p>
+          </div>
+          <div class="bg-white rounded-xl p-4 shadow-sm">
+            <p class="text-xs text-warm-500">本月成本</p>
+            <p class="text-xl font-bold" :class="(stats?.token?.month_cost || 0) > budgetLimit * 0.8 ? 'text-red-600' : 'text-warm-800'"
+              x-text="'¥' + (stats?.token?.month_cost || 0).toFixed(2)"></p>
+            <!-- 预算进度条 -->
+            <div class="mt-1.5 bg-warm-100 rounded-full h-2 overflow-hidden">
+              <div class="h-full rounded-full transition-all"
+                :class="budgetPct > 80 ? 'bg-red-400' : budgetPct > 50 ? 'bg-yellow-400' : 'bg-green-400'"
+                :style="'width:' + Math.min(budgetPct, 100) + '%'"></div>
+            </div>
+            <p class="text-xs mt-1" :class="budgetPct > 80 ? 'text-red-500' : 'text-warm-400'"
+              x-text="'预算 ¥' + budgetLimit + ' · ' + budgetPct.toFixed(0) + '%'"></p>
           </div>
           <div class="bg-white rounded-xl p-4 shadow-sm">
             <p class="text-xs text-warm-500">周期累计成本</p>
@@ -153,6 +165,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
           </div>
         </div>
 
+        <!-- 预算告警 -->
+        <div x-show="budgetPct >= 80" class="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p class="text-sm text-red-700 font-medium">
+            💰 本月成本已达预算的 <strong x-text="budgetPct.toFixed(0) + '%'"></strong>
+            （¥<span x-text="(stats?.token?.month_cost || 0).toFixed(2)"></span> / ¥<span x-text="budgetLimit"></span>）
+          </p>
+        </div>
+
         <!-- 异常告警 -->
         <div x-show="(stats?.latency?.stats?.slow_15s || 0) > 0" class="bg-red-50 border border-red-200 rounded-xl p-4">
           <p class="text-sm text-red-700 font-medium">
@@ -162,14 +182,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
           </p>
         </div>
 
+        <!-- Prompt 膨胀检测 -->
+        <div x-show="(stats?.token?.prompt_dist?.gt12k || 0) > 0" class="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+          <p class="text-sm text-yellow-700 font-medium">
+            📝 有 <strong x-text="stats?.token?.prompt_dist?.gt12k"></strong> 次请求 prompt_tokens > 12K，
+            可能存在记忆膨胀，建议检查 memory.md 大小
+          </p>
+        </div>
+
         <!-- Token 用量趋势图 -->
         <div class="bg-white rounded-xl p-5 shadow-sm">
           <h2 class="text-sm font-bold text-warm-800 mb-3">Token 用量趋势</h2>
           <div style="position:relative; height:200px;"><canvas id="tokenChart"></canvas></div>
         </div>
 
-        <!-- 模型占比 + 用户用量 -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- 模型占比 + 用户用量 + Prompt 分布 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div class="bg-white rounded-xl p-5 shadow-sm">
             <h2 class="text-sm font-bold text-warm-800 mb-3">模型 Token 分布</h2>
             <div style="position:relative; height:200px;"><canvas id="modelChart"></canvas></div>
@@ -186,26 +214,53 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
               </div>
             </template>
           </div>
+          <div class="bg-white rounded-xl p-5 shadow-sm">
+            <h2 class="text-sm font-bold text-warm-800 mb-3">Prompt Token 分布</h2>
+            <div style="position:relative; height:200px;"><canvas id="promptDistChart"></canvas></div>
+          </div>
         </div>
 
-        <!-- 延迟瀑布图 -->
+        <!-- 延迟瀑布图（可点击展开） -->
         <div class="bg-white rounded-xl p-5 shadow-sm">
-          <h2 class="text-sm font-bold text-warm-800 mb-3">最近请求延迟（最新 50 条）</h2>
-          <div class="space-y-1 max-h-[500px] overflow-y-auto">
+          <h2 class="text-sm font-bold text-warm-800 mb-3">最近请求延迟（点击展开详情）</h2>
+          <div class="space-y-0.5 max-h-[600px] overflow-y-auto">
             <template x-for="(d, i) in (stats?.latency?.recent || []).slice(0, 50)" :key="i">
-              <div class="flex items-center gap-2 text-xs py-1">
-                <span class="text-warm-400 w-[110px] shrink-0 font-mono" x-text="d.ts.slice(5,16)"></span>
-                <div class="flex-1 bg-warm-50 rounded overflow-hidden relative" style="height:22px;">
-                  <div class="latency-bar absolute left-0 top-0"
-                    :style="'width:' + Math.min(d.elapsed_s / 30 * 100, 100) + '%'"
-                    :class="d.elapsed_s > 15 ? 'bg-red-400' : d.elapsed_s > 8 ? 'bg-yellow-400' : 'bg-green-400'">
+              <div>
+                <div @click="expandedRow = (expandedRow === i ? null : i)"
+                  class="flex items-center gap-2 text-xs py-1 cursor-pointer hover:bg-warm-50 rounded px-1 transition">
+                  <span class="text-warm-400 w-[110px] shrink-0 font-mono" x-text="d.ts.slice(5,16)"></span>
+                  <div class="flex-1 bg-warm-50 rounded overflow-hidden relative" style="height:22px;">
+                    <div class="latency-bar absolute left-0 top-0"
+                      :style="'width:' + Math.min(d.elapsed_s / 30 * 100, 100) + '%'"
+                      :class="d.elapsed_s > 15 ? 'bg-red-400' : d.elapsed_s > 8 ? 'bg-yellow-400' : 'bg-green-400'">
+                    </div>
+                    <span class="relative z-10 px-2 leading-[22px] font-mono"
+                      :class="d.elapsed_s > 15 ? 'text-red-800' : 'text-warm-700'"
+                      x-text="d.elapsed_s + 's'"></span>
                   </div>
-                  <span class="relative z-10 px-2 leading-[22px] font-mono"
-                    :class="d.elapsed_s > 15 ? 'text-red-800' : 'text-warm-700'"
-                    x-text="d.elapsed_s + 's'"></span>
+                  <span class="w-[100px] shrink-0 text-warm-600 truncate font-mono" x-text="d.skill"></span>
+                  <span class="w-[80px] shrink-0 text-warm-400 truncate" x-text="d.user_id"></span>
+                  <span class="text-warm-300 text-[10px]" x-text="expandedRow === i ? '▲' : '▼'"></span>
                 </div>
-                <span class="w-[100px] shrink-0 text-warm-600 truncate" x-text="d.skill"></span>
-                <span class="w-[80px] shrink-0 text-warm-400 truncate" x-text="d.user_id"></span>
+                <!-- 展开详情 -->
+                <div x-show="expandedRow === i" x-cloak class="detail-panel ml-[110px] mr-2 mb-2 bg-warm-50 rounded-lg p-3 text-xs space-y-2 border border-warm-100">
+                  <div>
+                    <span class="text-warm-500 font-medium">输入：</span>
+                    <span class="text-warm-800" x-text="d.input || '-'"></span>
+                  </div>
+                  <div x-show="d.thinking">
+                    <span class="text-warm-500 font-medium">LLM 思考：</span>
+                    <span class="text-warm-700 italic" x-text="d.thinking"></span>
+                  </div>
+                  <div>
+                    <span class="text-warm-500 font-medium">技能：</span>
+                    <span class="text-warm-800 font-mono bg-warm-200 px-1 rounded" x-text="d.skill"></span>
+                  </div>
+                  <div x-show="d.reply">
+                    <span class="text-warm-500 font-medium">回复：</span>
+                    <span class="text-warm-800" x-text="d.reply"></span>
+                  </div>
+                </div>
               </div>
             </template>
           </div>
@@ -229,6 +284,44 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
         </div>
       </div>
     </div>
+
+    <!-- ==================== 错误聚合面板 ==================== -->
+    <div x-show="mainTab==='errors'" class="space-y-4">
+      <div x-show="statsLoading" class="text-warm-500 text-sm text-center py-8">加载错误数据...</div>
+      <div x-show="!statsLoading && stats" class="space-y-4">
+        <!-- 错误统计摘要 -->
+        <div class="bg-white rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-bold text-warm-800">错误日志聚合（最近 5000 行）</h2>
+            <span class="text-xs text-warm-500" x-text="(stats?.errors?.length || 0) + ' 种错误'"></span>
+          </div>
+          <div x-show="!stats?.errors?.length" class="text-center text-warm-400 text-sm py-6">
+            ✅ 最近无错误，运行正常
+          </div>
+          <div class="space-y-3">
+            <template x-for="(err, i) in (stats?.errors || [])" :key="i">
+              <div class="border border-red-100 rounded-lg overflow-hidden">
+                <div @click="expandedError = (expandedError === i ? null : i)"
+                  class="flex items-center justify-between p-3 bg-red-50 cursor-pointer hover:bg-red-100 transition">
+                  <div class="flex items-center gap-3 flex-1 min-w-0">
+                    <span class="bg-red-200 text-red-800 text-xs font-bold px-2 py-0.5 rounded-full shrink-0"
+                      x-text="err.count + '×'"></span>
+                    <span class="text-sm text-red-800 font-mono truncate" x-text="err.key"></span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-xs text-red-400" x-text="err.last_ts"></span>
+                    <span class="text-red-300 text-[10px]" x-text="expandedError === i ? '▲' : '▼'"></span>
+                  </div>
+                </div>
+                <div x-show="expandedError === i" x-cloak class="detail-panel p-3 bg-gray-900 text-gray-300">
+                  <pre class="text-xs font-mono whitespace-pre-wrap leading-relaxed" x-text="err.sample"></pre>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -242,6 +335,13 @@ function logsApp() {
     autoRefresh: false, lastFetch: '', _timer: null,
     // 统计
     stats: null, statsLoading: false, _charts: {},
+    expandedRow: null, expandedError: null,
+    // 预算
+    budgetLimit: 50,
+
+    get budgetPct() {
+      return ((this.stats?.token?.month_cost || 0) / this.budgetLimit) * 100;
+    },
 
     async login() {
       this.authError = '';
@@ -310,6 +410,7 @@ function logsApp() {
       if (typeof Chart === 'undefined') return;
       this.renderTokenChart();
       this.renderModelChart();
+      this.renderPromptDistChart();
     },
 
     renderTokenChart() {
@@ -352,6 +453,28 @@ function logsApp() {
         },
         options: {
           plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } },
+          responsive: true, maintainAspectRatio: false,
+        }
+      });
+    },
+
+    renderPromptDistChart() {
+      if (this._charts.promptDist) { this._charts.promptDist.destroy(); }
+      const el = document.getElementById('promptDistChart');
+      if (!el) return;
+      const dist = this.stats?.token?.prompt_dist || {};
+      this._charts.promptDist = new Chart(el, {
+        type: 'bar',
+        data: {
+          labels: ['<4K', '4-8K', '8-12K', '>12K'],
+          datasets: [{
+            data: [dist.lt4k||0, dist['4k_8k']||0, dist['8k_12k']||0, dist.gt12k||0],
+            backgroundColor: ['#86efac','#fde047','#fdba74','#fca5a5'],
+          }]
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } },
           responsive: true, maintainAspectRatio: false,
         }
       });

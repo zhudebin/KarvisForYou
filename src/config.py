@@ -51,6 +51,12 @@ COMPANION_RECENT_HOURS = 2
 # ============ Web / 管理员 ============
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 WEB_TOKEN_EXPIRE_HOURS = int(os.environ.get("WEB_TOKEN_EXPIRE_HOURS", "24"))
+ADMIN_USER_ID = os.environ.get("ADMIN_USER_ID", "")  # 管理员企微 user_id，用于告警推送
+
+# ============ 告警阈值 ============
+ALERT_SLOW_THRESHOLD = int(os.environ.get("ALERT_SLOW_THRESHOLD", "20"))     # 慢请求告警阈值(秒)
+ALERT_SLOW_CONSECUTIVE = int(os.environ.get("ALERT_SLOW_CONSECUTIVE", "3"))  # 连续慢请求才告警
+ALERT_COOLDOWN_SECONDS = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "300"))  # 同类告警冷却(秒)
 
 # ============ V8: 智能调度引擎 ============
 SCHEDULER_TICK_MINUTES = 30       # 心跳评估间隔（分钟）

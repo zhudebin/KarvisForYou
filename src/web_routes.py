@@ -716,6 +716,35 @@ def api_admin_stats():
 
     skill_top = sorted(skill_counts.items(), key=lambda x: -x[1])[:15]
 
+    # --- 3. 本月成本（用于预算预警） ---
+    month_str = now.strftime("%Y-%m")
+    month_cost = 0.0
+    for e in usage_entries:
+        if e.get("ts", "")[:7] == month_str:
+            m = e.get("model", "").lower()
+            pt = e.get("prompt_tokens", 0)
+            ct = e.get("completion_tokens", 0)
+            if "deepseek" in m:
+                month_cost += pt / 1e6 * 2 + ct / 1e6 * 8
+            elif "vl" in m:
+                month_cost += pt / 1e6 * 3 + ct / 1e6 * 9
+
+    # --- 4. Prompt Token 分布（膨胀检测） ---
+    prompt_dist = {"lt4k": 0, "4k_8k": 0, "8k_12k": 0, "gt12k": 0}
+    for e in usage_entries:
+        pt = e.get("prompt_tokens", 0)
+        if pt < 4000:
+            prompt_dist["lt4k"] += 1
+        elif pt < 8000:
+            prompt_dist["4k_8k"] += 1
+        elif pt < 12000:
+            prompt_dist["8k_12k"] += 1
+        else:
+            prompt_dist["gt12k"] += 1
+
+    # --- 5. 错误日志聚合 ---
+    error_groups = _aggregate_error_logs()
+
     return jsonify({
         "token": {
             "daily": dict(token_daily),
@@ -724,6 +753,8 @@ def api_admin_stats():
             "today": today_stats,
             "total_cost": round(total_cost, 2),
             "today_cost": round(today_cost, 4),
+            "month_cost": round(month_cost, 2),
+            "prompt_dist": prompt_dist,
         },
         "latency": {
             "recent": [{
@@ -731,7 +762,9 @@ def api_admin_stats():
                 "user_id": d.get("user_id", ""),
                 "skill": d.get("skill", ""),
                 "elapsed_s": d.get("elapsed_s", 0),
-                "input": d.get("input", "")[:40],
+                "input": d.get("input", "")[:80],
+                "thinking": d.get("thinking", ""),
+                "reply": d.get("reply", "")[:200],
             } for d in recent_decisions],
             "stats": latency_stats,
         },
@@ -739,8 +772,65 @@ def api_admin_stats():
             "top": skill_top,
             "by_user": {uid: dict(sk) for uid, sk in skill_by_user.items()},
         },
+        "errors": error_groups,
         "period_days": days,
     })
+
+
+def _aggregate_error_logs():
+    """从日志文件中提取 ERROR/Traceback，去重聚合计数"""
+    from collections import deque
+    error_groups = []
+    try:
+        if not os.path.exists(LOG_FILE_KARVISFORALL):
+            return []
+        with open(LOG_FILE_KARVISFORALL, "r", encoding="utf-8", errors="replace") as f:
+            lines = list(deque(f, maxlen=5000))  # 最近 5000 行
+
+        seen = {}  # {error_key: {count, last_ts, sample}}
+        i = 0
+        while i < len(lines):
+            line = lines[i].rstrip("\n")
+            is_error = "[ERROR]" in line.upper() or "Traceback" in line
+            if is_error:
+                # 收集多行 traceback
+                block = [line]
+                if "Traceback" in line:
+                    j = i + 1
+                    while j < len(lines) and (lines[j].startswith(" ") or lines[j].startswith("\t")
+                                               or "Error" in lines[j] or "Exception" in lines[j]):
+                        block.append(lines[j].rstrip("\n"))
+                        j += 1
+                    i = j
+                else:
+                    i += 1
+
+                # 提取错误签名（最后一行的错误类型）
+                last_line = block[-1].strip() if block else line
+                # 取错误类型作为 key（如 "KeyError: 'xxx'" → "KeyError"）
+                key = last_line.split(":")[0].strip() if ":" in last_line else last_line[:80]
+                # 去掉时间戳前缀
+                for prefix in ("[ERROR]", "[WARNING]"):
+                    if prefix in key:
+                        key = key[key.index(prefix):]
+
+                if key not in seen:
+                    seen[key] = {"count": 0, "last_ts": "", "sample": "\n".join(block[:10])}
+                seen[key]["count"] += 1
+                # 尝试提取时间戳
+                ts_match = re.search(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', line)
+                if ts_match:
+                    seen[key]["last_ts"] = ts_match.group()
+            else:
+                i += 1
+
+        error_groups = sorted(
+            [{"key": k, **v} for k, v in seen.items()],
+            key=lambda x: -x["count"]
+        )[:20]  # Top 20 错误
+    except Exception as e:
+        _log(f"[WebAPI] 错误聚合失败: {e}")
+    return error_groups
 
 
 @api_bp.route("/admin/logs", methods=["GET"])
