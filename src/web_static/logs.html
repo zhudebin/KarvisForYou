@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Karvis · 日志查看</title>
+<script src="https://cdn.tailwindcss.com/3.4.1"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+<script>
+tailwind.config = { theme: { extend: { colors: {
+  warm: { 50:'#fdf8f6',100:'#f2e8e5',200:'#eaddd7',300:'#e0cfc7',400:'#d2bab0',500:'#bfa094',600:'#a18072',700:'#977669',800:'#846358',900:'#43302b' }
+}}}}
+</script>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fdf8f6; }
+[x-cloak] { display: none !important; }
+.log-line { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
+.log-error { color: #f87171; }
+.log-warning { color: #fbbf24; }
+.log-info { color: #a5b4fc; }
+.log-area::-webkit-scrollbar { width: 8px; }
+.log-area::-webkit-scrollbar-track { background: #1e293b; }
+.log-area::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+</style>
+</head>
+<body class="p-4" x-data="logsApp()" x-init="init()">
+  <!-- 登录 -->
+  <div x-show="!authed" class="max-w-sm mx-auto mt-20 bg-white rounded-2xl shadow-lg p-8">
+    <h1 class="text-xl font-bold text-center mb-6" style="color:#43302b">📋 日志查看器</h1>
+    <input type="password" x-model="adminToken" @keydown.enter="login()" placeholder="输入管理员密钥"
+      class="w-full px-4 py-3 border rounded-xl mb-3 outline-none" style="border-color:#eaddd7">
+    <button @click="login()" class="w-full py-3 text-white rounded-xl font-medium transition" style="background:#977669">
+      进入
+    </button>
+    <p x-show="authError" class="text-red-500 text-sm text-center mt-2" x-text="authError"></p>
+  </div>
+
+  <!-- 主内容 -->
+  <div x-show="authed" x-cloak class="max-w-6xl mx-auto space-y-4">
+    <!-- 顶部标题栏 -->
+    <div class="flex items-center justify-between">
+      <h1 class="text-xl font-bold text-warm-900">📋 日志查看器</h1>
+      <div class="flex items-center gap-3">
+        <a href="/web/admin" class="text-sm text-warm-500 hover:text-warm-700">← 管理面板</a>
+        <button @click="authed=false;adminToken='';localStorage.removeItem('karvis_admin_token')" class="text-sm text-warm-500">退出</button>
+      </div>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- 项目切换 -->
+        <div class="flex rounded-lg overflow-hidden border border-warm-200">
+          <button @click="project='karvisforall'; fetchLogs()"
+            :class="project==='karvisforall' ? 'bg-warm-700 text-white' : 'bg-white text-warm-600 hover:bg-warm-50'"
+            class="px-3 py-1.5 text-sm font-medium transition">
+            KarvisForAll
+          </button>
+          <button @click="project='karvis'; fetchLogs()"
+            :class="project==='karvis' ? 'bg-warm-700 text-white' : 'bg-white text-warm-600 hover:bg-warm-50'"
+            class="px-3 py-1.5 text-sm font-medium transition">
+            Karvis
+          </button>
+        </div>
+
+        <!-- 关键词搜索 -->
+        <div class="relative flex-1 min-w-[180px]">
+          <input type="text" x-model="keyword" @keydown.enter="fetchLogs()" placeholder="关键词搜索..."
+            class="w-full pl-8 pr-3 py-1.5 text-sm border border-warm-200 rounded-lg outline-none focus:border-warm-400">
+          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-warm-400 text-xs">🔍</span>
+        </div>
+
+        <!-- 级别过滤 -->
+        <select x-model="level" @change="fetchLogs()"
+          class="px-3 py-1.5 text-sm border border-warm-200 rounded-lg outline-none bg-white text-warm-700">
+          <option value="">全部级别</option>
+          <option value="ERROR">ERROR</option>
+          <option value="WARNING">WARNING</option>
+          <option value="INFO">INFO</option>
+        </select>
+
+        <!-- 行数 -->
+        <select x-model="lines" @change="fetchLogs()"
+          class="px-3 py-1.5 text-sm border border-warm-200 rounded-lg outline-none bg-white text-warm-700">
+          <option value="100">100 行</option>
+          <option value="200" selected>200 行</option>
+          <option value="500">500 行</option>
+          <option value="1000">1000 行</option>
+        </select>
+
+        <!-- 操作按钮 -->
+        <button @click="fetchLogs()" class="px-3 py-1.5 text-sm bg-warm-700 text-white rounded-lg hover:bg-warm-800 transition">
+          刷新
+        </button>
+        <button @click="autoRefresh=!autoRefresh" :class="autoRefresh ? 'bg-green-600' : 'bg-warm-400'"
+          class="px-3 py-1.5 text-sm text-white rounded-lg transition">
+          <span x-text="autoRefresh ? '⟳ 自动刷新中' : '⟳ 自动刷新'"></span>
+        </button>
+        <button @click="scrollToBottom()" class="px-3 py-1.5 text-sm bg-warm-200 text-warm-700 rounded-lg hover:bg-warm-300 transition">
+          ↓ 到底部
+        </button>
+      </div>
+      <!-- 状态栏 -->
+      <div class="flex items-center justify-between mt-3 text-xs text-warm-500">
+        <span>项目: <strong x-text="project"></strong> · 共 <strong x-text="logLines.length"></strong> 行</span>
+        <span x-show="lastFetch" x-text="'上次刷新: ' + lastFetch"></span>
+      </div>
+    </div>
+
+    <!-- 日志区域 -->
+    <div class="bg-gray-900 rounded-xl shadow-sm overflow-hidden">
+      <div x-ref="logArea" class="log-area p-4 overflow-auto" style="height: calc(100vh - 280px); min-height: 400px;">
+        <!-- 加载中 -->
+        <div x-show="loading" class="text-gray-400 text-sm text-center py-8">加载中...</div>
+        <!-- 错误 -->
+        <div x-show="error" class="text-red-400 text-sm text-center py-8" x-text="error"></div>
+        <!-- 日志内容 -->
+        <div x-show="!loading && !error">
+          <div x-show="logLines.length === 0" class="text-gray-500 text-sm text-center py-8">暂无日志</div>
+          <template x-for="(line, i) in logLines" :key="i">
+            <div class="log-line py-0.5 border-b border-gray-800/50 hover:bg-gray-800/50"
+              :class="getLineClass(line)">
+              <span class="text-gray-600 select-none mr-2" x-text="String(i+1).padStart(4,' ')"></span><span x-text="line"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+function logsApp() {
+  return {
+    authed: false, adminToken: '', authError: '',
+    project: 'karvisforall', keyword: '', level: '', lines: '200',
+    logLines: [], loading: false, error: '',
+    autoRefresh: false, lastFetch: '', _timer: null,
+
+    async login() {
+      this.authError = '';
+      try {
+        const r = await fetch('/api/admin/users', { headers: {'X-Admin-Token': this.adminToken} });
+        if (r.status === 403) { this.authError = '密钥错误'; return; }
+        localStorage.setItem('karvis_admin_token', this.adminToken);
+        this.authed = true;
+        this.fetchLogs();
+      } catch(e) { this.authError = '网络错误'; }
+    },
+
+    async init() {
+      const saved = localStorage.getItem('karvis_admin_token');
+      if (saved) { this.adminToken = saved; await this.login(); }
+      // 监听自动刷新开关
+      this.$watch('autoRefresh', (val) => {
+        if (this._timer) { clearInterval(this._timer); this._timer = null; }
+        if (val) {
+          this._timer = setInterval(() => this.fetchLogs(), 3000);
+        }
+      });
+    },
+
+    async fetchLogs() {
+      this.loading = true;
+      this.error = '';
+      try {
+        const params = new URLSearchParams({
+          project: this.project,
+          lines: this.lines,
+          keyword: this.keyword,
+          level: this.level,
+        });
+        const r = await fetch('/api/admin/logs?' + params, {
+          headers: { 'X-Admin-Token': this.adminToken }
+        });
+        if (r.status === 403) {
+          this.authed = false;
+          this.authError = '令牌已失效，请重新登录';
+          return;
+        }
+        const d = await r.json();
+        this.logLines = d.lines || [];
+        const now = new Date();
+        this.lastFetch = now.toLocaleTimeString('zh-CN', { hour12: false });
+      } catch(e) {
+        this.error = '获取日志失败: ' + e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    getLineClass(line) {
+      if (!line) return '';
+      const upper = line.toUpperCase();
+      if (upper.includes('ERROR') || upper.includes('TRACEBACK') || upper.includes('EXCEPTION')) return 'log-error';
+      if (upper.includes('WARNING') || upper.includes('WARN')) return 'log-warning';
+      if (upper.includes('[WEBAPI]') || upper.includes('[INFO]')) return 'log-info';
+      return 'text-gray-300';
+    },
+
+    scrollToBottom() {
+      const area = this.$refs.logArea;
+      if (area) area.scrollTop = area.scrollHeight;
+    }
+  }
+}
+</script>
+</body>
+</html>

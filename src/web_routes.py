@@ -16,7 +16,7 @@ from user_context import (
     verify_token, UserContext, get_all_users, update_user_status,
     SYSTEM_DIR, USAGE_LOG_FILE,
 )
-from config import ADMIN_TOKEN
+from config import ADMIN_TOKEN, LOG_FILE_KARVISFORALL, LOG_KARVIS_COMPOSE_DIR
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -581,6 +581,61 @@ def api_admin_activate(uid):
     return jsonify({"ok": True, "user_id": uid, "status": "active"})
 
 
+@api_bp.route("/admin/logs", methods=["GET"])
+@require_admin
+def api_admin_logs():
+    """GET /api/admin/logs — 查看服务日志"""
+    import subprocess
+    from collections import deque
+
+    project = request.args.get("project", "karvisforall")
+    lines = min(int(request.args.get("lines", "200")), 2000)
+    keyword = request.args.get("keyword", "").strip()
+    level = request.args.get("level", "").upper()
+
+    log_lines = []
+
+    if project == "karvis":
+        # Karvis 个人版: 通过 docker compose logs 获取
+        try:
+            result = subprocess.run(
+                ["docker", "compose", "-f",
+                 os.path.join(LOG_KARVIS_COMPOSE_DIR, "docker-compose.yml"),
+                 "logs", "--tail", str(lines), "--no-color"],
+                capture_output=True, text=True, timeout=10,
+            )
+            raw = result.stdout or result.stderr or ""
+            for line in raw.splitlines():
+                # 去掉 Docker 容器名前缀 (e.g. "karvis-personal-1  | ")
+                idx = line.find("| ")
+                clean = line[idx + 2:] if idx != -1 else line
+                log_lines.append(clean)
+        except Exception as e:
+            log_lines = [f"[ERROR] 读取 Karvis 日志失败: {e}"]
+    else:
+        # KarvisForAll: 直接读取文件尾部
+        try:
+            if os.path.exists(LOG_FILE_KARVISFORALL):
+                with open(LOG_FILE_KARVISFORALL, "r", encoding="utf-8", errors="replace") as f:
+                    log_lines = list(deque(f, maxlen=lines))
+                log_lines = [l.rstrip("\n") for l in log_lines]
+            else:
+                log_lines = [f"[ERROR] 日志文件不存在: {LOG_FILE_KARVISFORALL}"]
+        except Exception as e:
+            log_lines = [f"[ERROR] 读取日志失败: {e}"]
+
+    # 关键词过滤
+    if keyword:
+        kw_lower = keyword.lower()
+        log_lines = [l for l in log_lines if kw_lower in l.lower()]
+
+    # 级别过滤
+    if level and level != "ALL":
+        log_lines = [l for l in log_lines if level in l.upper()]
+
+    return jsonify({"lines": log_lines, "total": len(log_lines), "project": project})
+
+
 # ============================================================
 # Web 页面路由 — /web/*（提供静态 HTML）
 # ============================================================
@@ -637,6 +692,11 @@ def web_memory():
 @web_bp.route("/admin")
 def web_admin():
     return _serve_page("admin.html")
+
+
+@web_bp.route("/logs")
+def web_logs():
+    return _serve_page("logs.html")
 
 
 def _serve_page(filename):
