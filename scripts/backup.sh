@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # ---- 配置 ----
-PROJECT_DIR="${KARVIS_PROJECT_DIR:-/opt/karvis-all}"
+PROJECT_DIR="${KARVIS_PROJECT_DIR:-/root/KarvisForAll}"
 DATA_DIR="${PROJECT_DIR}/data"
 BACKUP_DIR="${PROJECT_DIR}/backups"
 KEEP_DAYS=7
