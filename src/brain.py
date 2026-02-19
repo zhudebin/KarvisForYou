@@ -391,10 +391,53 @@ def _build_time_string(now_bj):
 
     return " | ".join(parts)
 
-def build_system_prompt(state, ctx, prompt_futs=None):
+def _select_rules(state, payload=None):
+    """根据 payload.type / state / 用户文本，选择需要注入的 RULES 分段。
+
+    方案 C: system 类型请求只注入 RULES_SYSTEM_TASKS（不含 SKILLS 和用户交互 RULES）
+    方案 A: 用户消息根据 state 和关键词动态注入分段，RULES_CORE 始终注入
+    注意：KarvisForAll 没有 RULES_FINANCE
+    """
+    # 方案 C: 定时任务走精简 prompt
+    if payload and payload.get("type") == "system":
+        return [prompts.RULES_SYSTEM_TASKS]
+
+    # 方案 A: 用户消息 — CORE 始终注入，其余按需
+    segments = [prompts.RULES_CORE]
+
+    user_text = (payload.get("text", "") if payload else "").lower() if payload else ""
+
+    # 读书/影视：state 中有 active_book/active_media 或关键词
+    _BOOKS_KW = ("看了", "读了", "推荐", "这本书", "书摘", "金句", "总结一下",
+                 "在读", "在看", "电影", "剧", "纪录片", "动画", "影视")
+    if state.get("active_book") or state.get("active_media") or \
+       any(kw in user_text for kw in _BOOKS_KW):
+        segments.append(prompts.RULES_BOOKS_MEDIA)
+
+    # 习惯/Top3：state 中有活跃实验 或 daily_top3 或关键词
+    _HABITS_KW = ("实验", "习惯", "top 3", "top3", "今天要做", "今天的目标",
+                  "今天最重要")
+    if state.get("active_experiment") or state.get("daily_top3") or \
+       any(kw in user_text for kw in _HABITS_KW):
+        segments.append(prompts.RULES_HABITS)
+
+    # 高级功能：语音长度/决策/深潜/agent loop 关键词
+    _ADV_KW = ("要不要", "纠结", "犹豫", "决定了", "决策", "复盘",
+               "回顾", "分析", "梳理", "深潜", "盘点", "之前写过",
+               "帮我看看", "文件里")
+    is_voice = payload.get("type") == "voice" if payload else False
+    if is_voice or state.get("pending_decisions") or \
+       any(kw in user_text for kw in _ADV_KW):
+        segments.append(prompts.RULES_ADVANCED)
+
+    return segments
+
+
+def build_system_prompt(state, ctx, prompt_futs=None, payload=None):
     """组装完整的 System Prompt（多用户版，支持用户自定义 SOUL）
     
     prompt_futs: 可选，外部提前提交的 {"mem": Future} dict，用于与 state 读取并行
+    payload: 可选，当前请求 payload，用于条件 RULES 注入
     """
     beijing_tz = timezone(timedelta(hours=8))
     now_bj = datetime.now(beijing_tz)
@@ -421,25 +464,25 @@ def build_system_prompt(state, ctx, prompt_futs=None):
     if ai_name:
         soul += f"\n- 用户给你起了昵称「{ai_name}」，在合适的时候可以用这个名字自称"
 
-    return f"""{soul}
+    # 方案 C+A: 条件注入 RULES
+    is_system = payload and payload.get("type") == "system"
+    rules_segments = _select_rules(state, payload)
+    rules_text = "\n\n".join(rules_segments)
 
-## 长期记忆
-{mem}
+    # 方案 C: system 类型不注入 SKILLS
+    skills_block = "" if is_system else prompts.SKILLS
 
-## 最近对话
-{recent}
+    parts = [soul,
+             f"\n## 长期记忆\n{mem}",
+             f"\n## 最近对话\n{recent}",
+             f"\n## 当前状态\n{state_summary}",
+             f"\n## 当前时间\n{current_time}"]
+    if skills_block:
+        parts.append(f"\n{skills_block}")
+    parts.append(f"\n{rules_text}")
+    parts.append(f"\n{prompts.OUTPUT_FORMAT}")
 
-## 当前状态
-{state_summary}
-
-## 当前时间
-{current_time}
-
-{prompts.SKILLS}
-
-{prompts.RULES}
-
-{prompts.OUTPUT_FORMAT}"""
+    return "\n".join(parts)
 
 
 def _build_state_summary(state):
@@ -584,7 +627,7 @@ def process(payload, send_fn=None, ctx=None):
         _update_nudge_state(state)
 
     # 5. 构建 prompt 并调用 LLM（prompt_futs 在步骤 1 已提交，此处直接取结果）
-    system_prompt = build_system_prompt(state, ctx, prompt_futs=prompt_futs)
+    system_prompt = build_system_prompt(state, ctx, prompt_futs=prompt_futs, payload=payload)
     t_prompt = _time.time()
     _log(f"[Brain][耗时] prompt组装: {t_prompt - t_state:.1f}s (prompt长度={len(system_prompt)})")
 
