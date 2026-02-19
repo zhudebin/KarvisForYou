@@ -14,7 +14,7 @@ from flask import Blueprint, request, jsonify, send_from_directory, redirect, ur
 
 from user_context import (
     verify_token, UserContext, get_all_users, update_user_status,
-    SYSTEM_DIR, USAGE_LOG_FILE,
+    SYSTEM_DIR, USAGE_LOG_FILE, DATA_DIR,
 )
 from config import ADMIN_TOKEN, LOG_FILE_KARVISFORALL, LOG_KARVIS_COMPOSE_DIR
 
@@ -579,6 +579,168 @@ def api_admin_activate(uid):
     _log(f"[WebAPI] /api/admin/activate: {uid}")
     update_user_status(uid, "active")
     return jsonify({"ok": True, "user_id": uid, "status": "active"})
+
+
+@api_bp.route("/admin/stats", methods=["GET"])
+@require_admin
+def api_admin_stats():
+    """GET /api/admin/stats — 延迟 + Token + 技能统计"""
+    import glob
+    from collections import defaultdict
+
+    days = int(request.args.get("days", "14"))
+    now = datetime.now(_BEIJING_TZ)
+    cutoff = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # --- 1. 读取 usage_log.jsonl (Token 用量) ---
+    usage_entries = []
+    try:
+        if os.path.exists(USAGE_LOG_FILE):
+            with open(USAGE_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                        if e.get("ts", "")[:10] >= cutoff:
+                            usage_entries.append(e)
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        pass
+
+    # Token 按日汇总
+    token_daily = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+    token_by_model = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+    token_by_user = defaultdict(lambda: {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+    today_str = now.strftime("%Y-%m-%d")
+
+    for e in usage_entries:
+        day = e.get("ts", "")[:10]
+        pt = e.get("prompt_tokens", 0)
+        ct = e.get("completion_tokens", 0)
+        tt = e.get("total_tokens", 0)
+        model = e.get("model", "unknown")
+        uid = e.get("user_id", "unknown")
+
+        token_daily[day]["prompt"] += pt
+        token_daily[day]["completion"] += ct
+        token_daily[day]["total"] += tt
+        token_daily[day]["calls"] += 1
+
+        token_by_model[model]["prompt"] += pt
+        token_by_model[model]["completion"] += ct
+        token_by_model[model]["total"] += tt
+        token_by_model[model]["calls"] += 1
+
+        token_by_user[uid]["prompt"] += pt
+        token_by_user[uid]["completion"] += ct
+        token_by_user[uid]["total"] += tt
+        token_by_user[uid]["calls"] += 1
+
+    # 今日汇总
+    today_stats = token_daily.get(today_str, {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+
+    # 成本估算 (DeepSeek: 输入¥2/M 输出¥8/M, Qwen Flash: 免费, Qwen VL: 输入¥3/M 输出¥9/M)
+    total_cost = 0.0
+    for model, stats in token_by_model.items():
+        m = model.lower()
+        if "deepseek" in m:
+            total_cost += stats["prompt"] / 1e6 * 2 + stats["completion"] / 1e6 * 8
+        elif "vl" in m or "vl-max" in m:
+            total_cost += stats["prompt"] / 1e6 * 3 + stats["completion"] / 1e6 * 9
+        # qwen-flash 免费
+
+    today_cost = 0.0
+    for e in usage_entries:
+        if e.get("ts", "")[:10] == today_str:
+            m = e.get("model", "").lower()
+            pt = e.get("prompt_tokens", 0)
+            ct = e.get("completion_tokens", 0)
+            if "deepseek" in m:
+                today_cost += pt / 1e6 * 2 + ct / 1e6 * 8
+            elif "vl" in m:
+                today_cost += pt / 1e6 * 3 + ct / 1e6 * 9
+
+    # --- 2. 读取各用户 decisions.jsonl (延迟 + 技能) ---
+    decisions = []
+    users_dir = os.path.join(DATA_DIR, "users")
+    try:
+        decision_files = glob.glob(os.path.join(users_dir, "*", "_Karvis", "logs", "decisions.jsonl"))
+        for df in decision_files:
+            uid = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(df))))
+            with open(df, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                        if e.get("ts", "")[:10] >= cutoff:
+                            e["user_id"] = uid
+                            decisions.append(e)
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        pass
+
+    # 按时间倒排，取最近 100 条用于延迟瀑布图
+    decisions.sort(key=lambda x: x.get("ts", ""), reverse=True)
+    recent_decisions = decisions[:100]
+
+    # 延迟分布统计
+    latencies = [d.get("elapsed_s", 0) for d in decisions if d.get("elapsed_s")]
+    latency_stats = {}
+    if latencies:
+        latencies_sorted = sorted(latencies)
+        latency_stats = {
+            "avg": round(sum(latencies) / len(latencies), 1),
+            "p50": round(latencies_sorted[len(latencies_sorted) // 2], 1),
+            "p90": round(latencies_sorted[int(len(latencies_sorted) * 0.9)], 1),
+            "p99": round(latencies_sorted[int(len(latencies_sorted) * 0.99)], 1),
+            "max": round(max(latencies), 1),
+            "count": len(latencies),
+            "slow_15s": len([l for l in latencies if l > 15]),
+            "slow_8s": len([l for l in latencies if l > 8]),
+        }
+
+    # 技能频次统计
+    skill_counts = defaultdict(int)
+    skill_by_user = defaultdict(lambda: defaultdict(int))
+    for d in decisions:
+        sk = d.get("skill", "unknown")
+        uid = d.get("user_id", "unknown")
+        skill_counts[sk] += 1
+        skill_by_user[uid][sk] += 1
+
+    skill_top = sorted(skill_counts.items(), key=lambda x: -x[1])[:15]
+
+    return jsonify({
+        "token": {
+            "daily": dict(token_daily),
+            "by_model": dict(token_by_model),
+            "by_user": dict(token_by_user),
+            "today": today_stats,
+            "total_cost": round(total_cost, 2),
+            "today_cost": round(today_cost, 4),
+        },
+        "latency": {
+            "recent": [{
+                "ts": d.get("ts", ""),
+                "user_id": d.get("user_id", ""),
+                "skill": d.get("skill", ""),
+                "elapsed_s": d.get("elapsed_s", 0),
+                "input": d.get("input", "")[:40],
+            } for d in recent_decisions],
+            "stats": latency_stats,
+        },
+        "skills": {
+            "top": skill_top,
+            "by_user": {uid: dict(sk) for uid, sk in skill_by_user.items()},
+        },
+        "period_days": days,
+    })
 
 
 @api_bp.route("/admin/logs", methods=["GET"])
