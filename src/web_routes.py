@@ -958,6 +958,12 @@ def _serve_page(filename):
     return send_from_directory(_STATIC_DIR, filename)
 
 
+@web_bp.route("/static/<path:filename>")
+def web_static_file(filename):
+    """提供静态资源文件（JS/CSS 等）"""
+    return send_from_directory(_STATIC_DIR, filename)
+
+
 # ============================================================
 # 工具函数
 # ============================================================

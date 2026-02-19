@@ -6,7 +6,7 @@
 <title>Karvis · 日志 & 监控</title>
 <script src="https://cdn.tailwindcss.com/3.4.1"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/web/static/chart.umd.min.js"></script>
 <script>
 tailwind.config = { theme: { extend: { colors: {
   warm: { 50:'#fdf8f6',100:'#f2e8e5',200:'#eaddd7',300:'#e0cfc7',400:'#d2bab0',500:'#bfa094',600:'#a18072',700:'#977669',800:'#846358',900:'#43302b' }
@@ -396,18 +396,22 @@ function logsApp() {
 
     // ---- 统计 ----
     async loadStats() {
-      if (this.stats) { this.$nextTick(() => this.renderCharts()); return; }
+      if (this.stats) { this.$nextTick(() => { requestAnimationFrame(() => this.renderCharts()); }); return; }
       this.statsLoading = true;
       try {
         const r = await fetch('/api/admin/stats?days=14', { headers: { 'X-Admin-Token': this.adminToken } });
         this.stats = await r.json();
-        this.$nextTick(() => this.renderCharts());
+        // 等 Alpine 更新 x-show DOM → 等浏览器完成布局 → 再渲染图表
+        this.$nextTick(() => { setTimeout(() => this.renderCharts(), 50); });
       } catch(e) { console.error(e); }
       finally { this.statsLoading = false; }
     },
 
     renderCharts() {
-      if (typeof Chart === 'undefined') return;
+      if (typeof Chart === 'undefined') {
+        console.warn('[Stats] Chart.js 未加载，图表无法渲染');
+        return;
+      }
       this.renderTokenChart();
       this.renderModelChart();
       this.renderPromptDistChart();
