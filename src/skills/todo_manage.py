@@ -272,6 +272,17 @@ def _clean_reminders(state, completed_contents):
     return {}
 
 
+def _reminder_in_doing(reminder, doing_contents):
+    """检查 reminder 是否仍在"进行中"列表中（关键词双向匹配）"""
+    r_kw = reminder.get("content", "").lower()
+    if not r_kw:
+        return False
+    for dc in doing_contents:
+        if r_kw in dc or dc in r_kw:
+            return True
+    return False
+
+
 def list_todos(params, state, ctx):
     """
     查看待办清单（带序号，用户可用序号引用）。
@@ -299,12 +310,13 @@ def list_todos(params, state, ctx):
     return {"success": True, "reply": "\n".join(parts)}
 
 
-def check_reminders(state):
+def check_reminders(state, todo_file=None):
     """
     检查到期提醒，返回需要推送的消息列表。
     由 /system?action=todo_remind 直接调用，不经过 LLM。
 
     检查逻辑：
+    - 先交叉验证 Todo.md，自动清理已手动完成（Obsidian 打勾）的提醒
     - remind_at 类型：提前 30 分钟预警 + 到时提醒
     - deadline 类型：当天提醒
     - 已推送的提醒打上 notified 标记，避免重复
@@ -314,6 +326,23 @@ def check_reminders(state):
     reminders = state.get("reminders", [])
     if not reminders:
         return {"messages": [], "state_updates": {}}
+
+    # ── 交叉验证 Todo.md：清理已手动完成的提醒 ──
+    cross_validated = False
+    if todo_file:
+        try:
+            text = OneDriveIO.read_text(todo_file)
+            if text:
+                doing, _ = _parse_todo_md(text)
+                doing_contents = [item["content"].lower() for item in doing]
+                before_count = len(reminders)
+                reminders = [r for r in reminders if _reminder_in_doing(r, doing_contents)]
+                auto_cleaned = before_count - len(reminders)
+                if auto_cleaned > 0:
+                    cross_validated = True
+                    _log(f"[todo.remind] 交叉验证清理 {auto_cleaned} 条已手动完成的提醒")
+        except Exception as e:
+            _log(f"[todo.remind] 读取 Todo.md 交叉验证失败（不影响主流程）: {e}")
 
     now = datetime.now(BEIJING_TZ)
     now_str = now.strftime("%Y-%m-%d %H:%M")
@@ -375,7 +404,7 @@ def check_reminders(state):
         cleaned.append(r)
 
     state_updates = {}
-    if changed or len(cleaned) != len(reminders):
+    if changed or cross_validated or len(cleaned) != len(reminders):
         state_updates["reminders"] = cleaned
 
     _log(f"[todo.remind] 检查 {len(reminders)} 条提醒, 推送 {len(messages)} 条")

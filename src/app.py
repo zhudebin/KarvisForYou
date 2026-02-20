@@ -852,7 +852,7 @@ def _run_system_action_for_user(action, data, uid, ctx):
     if action == "todo_remind":
         from skills.todo_manage import check_reminders
         state = read_state_cached(ctx) or {}
-        result = check_reminders(state)
+        result = check_reminders(state, todo_file=ctx.todo_file)
         messages = result.get("messages", [])
         state_updates = result.get("state_updates", {})
         _log(f"[system_action] todo_remind: {len(messages)} 条提醒, {len(state_updates)} 个状态更新")
