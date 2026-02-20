@@ -1682,7 +1682,16 @@ def _scheduler_tick(uid, ctx):
     if executed > 0:
         sched["_last_push_time"] = now_str
 
-    write_state_and_update_cache(state, ctx)
+    # 重新读取最新 state，避免覆盖子 action（如 todo_remind）的 state 更新
+    if executed > 0:
+        fresh_state = read_state_cached(ctx) or {}
+        fresh_sched = fresh_state.setdefault("scheduler", {})
+        fresh_sched["intents"] = sched["intents"]
+        fresh_sched["_push_count_today"] = sched["_push_count_today"]
+        fresh_sched["_last_push_time"] = sched.get("_last_push_time")
+        write_state_and_update_cache(fresh_state, ctx)
+    else:
+        write_state_and_update_cache(state, ctx)
     _log(f"[V8][{uid}] tick 完成: 评估 {len(pending)}, 执行 {executed}")
     return {"evaluated": len(pending), "executed": executed}
 

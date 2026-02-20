@@ -23,7 +23,8 @@ def _now_str():
 def _parse_todo_md(text):
     """
     解析 Todo.md，返回 (doing_items, done_items)。
-    每个 item 是 {"raw": "原始行", "content": "纯文本", "date": "日期标签"}
+    每个 item 是 {"raw": "原始行", "content": "纯文本", "date": "日期标签", "checked": bool}
+    checked=True 表示 [x]（含 Obsidian 手动打勾的情况）
     """
     doing = []
     done = []
@@ -44,6 +45,9 @@ def _parse_todo_md(text):
         if not stripped.startswith("- ["):
             continue
 
+        # 检测 checkbox 状态
+        checked = stripped.startswith("- [x]")
+
         # 提取内容和日期
         content = stripped
         date_tag = ""
@@ -55,7 +59,7 @@ def _parse_todo_md(text):
         # 去掉 checkbox 标记
         content = re.sub(r'^- \[[ x]\] ', '', content).strip()
 
-        item = {"raw": stripped, "content": content, "date": date_tag}
+        item = {"raw": stripped, "content": content, "date": date_tag, "checked": checked}
 
         if current_section == "doing":
             doing.append(item)
@@ -328,15 +332,18 @@ def check_reminders(state, todo_file=None):
         return {"messages": [], "state_updates": {}}
 
     # ── 交叉验证 Todo.md：清理已手动完成的提醒 ──
+    # 只有 "进行中" 区域下且未打勾 ([ ]) 的才视为仍在进行
+    # 打勾 ([x]) 但未移到"已完成"区域的 = Obsidian 手动完成
     cross_validated = False
     if todo_file:
         try:
             text = OneDriveIO.read_text(todo_file)
             if text:
                 doing, _ = _parse_todo_md(text)
-                doing_contents = [item["content"].lower() for item in doing]
+                # 只保留未打勾的 doing items
+                active_contents = [item["content"].lower() for item in doing if not item.get("checked")]
                 before_count = len(reminders)
-                reminders = [r for r in reminders if _reminder_in_doing(r, doing_contents)]
+                reminders = [r for r in reminders if _reminder_in_doing(r, active_contents)]
                 auto_cleaned = before_count - len(reminders)
                 if auto_cleaned > 0:
                     cross_validated = True
