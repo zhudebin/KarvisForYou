@@ -960,6 +960,14 @@ def _run_system_action_for_user(action, data, uid, ctx):
     if action == "mood_generate":
         from skills.mood_diary import execute as mood_execute
         state = read_state_cached(ctx) or {}
+
+        # 幂等保护：同一天只生成一次
+        today_str = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+        scores = state.get("mood_scores", [])
+        if any(s.get("date") == today_str for s in scores):
+            _log(f"[system_action] mood_generate 今天({today_str})已生成，跳过, user={uid}")
+            return {"ok": True, "skipped": True}
+
         _log(f"[system_action] mood_generate: 开始生成情绪日记, user={uid}")
         result = mood_execute(data, state, ctx)
         write_state_and_update_cache(state, ctx)
@@ -1571,8 +1579,9 @@ def _generate_daily_intents(state):
 
 def _daily_init(uid, ctx):
     """V8: 每日初始化（多用户版）— 生成当天意图队列 + 重置计数器"""
-    from memory import read_state_cached, write_state_and_update_cache
-    state = read_state_cached(ctx) or {}
+    from memory import write_state_and_update_cache
+    # 绕过缓存直接读文件，防止缓存中旧的 _init_date 导致重复初始化
+    state = OneDriveIO.read_json(ctx.state_file) or {}
     sched = state.setdefault("scheduler", {})
     now = datetime.now(BEIJING_TZ)
     today_str = now.strftime("%Y-%m-%d")
@@ -1580,6 +1589,14 @@ def _daily_init(uid, ctx):
     if sched.get("_init_date") == today_str:
         _log(f"[V8][{uid}] daily_init 今天已执行，跳过")
         return {"skipped": True, "date": today_str}
+
+    # 额外防重复：如果已有意图队列且有非 pending 状态，不覆盖
+    existing_intents = sched.get("intents", [])
+    if existing_intents and any(i.get("status") not in ("pending", None) for i in existing_intents):
+        _log(f"[V8][{uid}] daily_init 检测到已有执行中/已完成的意图队列，跳过覆盖")
+        sched["_init_date"] = today_str
+        write_state_and_update_cache(state, ctx)
+        return {"skipped": True, "reason": "intents_already_active"}
 
     intents = _generate_daily_intents(state)
 
@@ -1610,8 +1627,9 @@ def _daily_init(uid, ctx):
 
 def _scheduler_tick(uid, ctx):
     """V8: 每 30 分钟心跳（多用户版）— 检查到期意图并执行"""
-    from memory import read_state_cached, write_state_and_update_cache
-    state = read_state_cached(ctx) or {}
+    from memory import write_state_and_update_cache
+    # 绕过缓存读最新 state，防止缓存中旧的意图状态导致重复执行
+    state = OneDriveIO.read_json(ctx.state_file) or {}
     sched = state.setdefault("scheduler", {})
     now = datetime.now(BEIJING_TZ)
     now_str = now.strftime("%H:%M")
@@ -1621,7 +1639,8 @@ def _scheduler_tick(uid, ctx):
     if sched.get("_init_date") != today_str:
         _log(f"[V8][{uid}] tick 检测到未初始化，触发 daily_init")
         _daily_init(uid, ctx)
-        state = read_state_cached(ctx) or {}
+        # 重新读取（daily_init 已写入文件）
+        state = OneDriveIO.read_json(ctx.state_file) or {}
         sched = state.get("scheduler", {})
 
     intents = sched.get("intents", [])
@@ -1684,7 +1703,7 @@ def _scheduler_tick(uid, ctx):
 
     # 重新读取最新 state，避免覆盖子 action（如 todo_remind）的 state 更新
     if executed > 0:
-        fresh_state = read_state_cached(ctx) or {}
+        fresh_state = OneDriveIO.read_json(ctx.state_file) or {}
         fresh_sched = fresh_state.setdefault("scheduler", {})
         fresh_sched["intents"] = sched["intents"]
         fresh_sched["_push_count_today"] = sched["_push_count_today"]
