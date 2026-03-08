@@ -13,7 +13,7 @@ Skill: mood.generate
 import sys
 import json
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
+
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -73,7 +73,7 @@ def execute(params, state, ctx):
     # 5. 构建 Markdown 并写入
     mood_md = _build_mood_diary(date_str, analysis, data)
     file_path = f"{ctx.emotion_notes_dir}/{date_str}.md"
-    ok = _write_mood_diary(file_path, date_str, mood_md)
+    ok = _write_mood_diary(ctx, file_path, date_str, mood_md)
 
     if ok:
         _log(f"[mood.generate] 情绪日记已写入: {file_path}")
@@ -105,10 +105,10 @@ def _collect_mood_data(date_str, state, ctx):
     results = {}
     try:
         from brain import _executor
-        futures = {k: _executor.submit(OneDriveIO.read_text, v) for k, v in files_to_read.items()}
+        futures = {k: _executor.submit(ctx.IO.read_text, v) for k, v in files_to_read.items()}
     except ImportError:
         _pool = ThreadPoolExecutor(max_workers=6)
-        futures = {k: _pool.submit(OneDriveIO.read_text, v) for k, v in files_to_read.items()}
+        futures = {k: _pool.submit(ctx.IO.read_text, v) for k, v in files_to_read.items()}
 
     for k, fut in futures.items():
         try:
@@ -349,9 +349,9 @@ def _build_mood_diary(date_str, analysis, data):
     return "\n".join(lines)
 
 
-def _write_mood_diary(file_path, date_str, mood_content):
+def _write_mood_diary(ctx, file_path, date_str, mood_content):
     """写入情绪日记（追加到已有归档内容之后，替换已有分析段）"""
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
     if existing is None:
         existing = ""
 
@@ -383,7 +383,7 @@ def _write_mood_diary(file_path, date_str, mood_content):
         # 追加到已有归档内容之后
         new_content = existing.rstrip() + "\n\n" + mood_content
 
-    return OneDriveIO.write_text(file_path, new_content)
+    return ctx.IO.write_text(file_path, new_content)
 
 
 # Skill 热加载注册表

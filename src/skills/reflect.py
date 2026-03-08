@@ -17,7 +17,8 @@ import json
 import random
 from datetime import datetime, timezone, timedelta
 from config import REFLECT_COOLDOWN_DAYS
-from storage import IO
+from local_io import LocalFileIO as _LocalIO
+
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -27,7 +28,7 @@ def _log(msg):
 
 
 def _reflect_dir(ctx):
-    """获取用户的 reflect 数据目录"""
+    """获取用户的 reflect 数据目录（始终本地存储，不走 OneDrive）"""
     d = os.path.join(ctx.base_dir, "_Karvis", "reflect")
     os.makedirs(d, exist_ok=True)
     return d
@@ -290,9 +291,9 @@ for cat, questions in QUESTION_BANK.items():
 # ============ 题目选择算法 ============
 
 def _load_question_history(ctx):
-    """加载已推送问题历史"""
+    """加载已推送问题历史（本地存储）"""
     path = _question_history_file(ctx)
-    text = IO.read_text(path)
+    text = _LocalIO.read_text(path)
     if text:
         try:
             return json.loads(text)
@@ -302,7 +303,7 @@ def _load_question_history(ctx):
 
 
 def _save_question_history(history, ctx):
-    IO.write_text(_question_history_file(ctx), json.dumps(history, ensure_ascii=False, indent=2))
+    _LocalIO.write_text(_question_history_file(ctx), json.dumps(history, ensure_ascii=False, indent=2))
 
 
 def _select_question(state, ctx):
@@ -563,7 +564,7 @@ def history(params, state, ctx):
         days = 7
     days = min(days, 30)
 
-    text = IO.read_text(_reflect_log_file(ctx))
+    text = _LocalIO.read_text(_reflect_log_file(ctx))
     if not text or not text.strip():
         return {"success": True, "reply": "还没有深度自问的记录呢~"}
 
@@ -643,8 +644,8 @@ def _write_log_entry(entry, ctx):
     try:
         line = json.dumps(entry, ensure_ascii=False)
         path = _reflect_log_file(ctx)
-        existing = IO.read_text(path) or ""
-        IO.write_text(path, existing + line + "\n")
+        existing = _LocalIO.read_text(path) or ""
+        _LocalIO.write_text(path, existing + line + "\n")
     except Exception as e:
         _log(f"[reflect] 日志写入失败: {e}")
 

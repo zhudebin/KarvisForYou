@@ -9,7 +9,6 @@ import os
 import copy
 import threading
 from config import RECENT_MESSAGES_LIMIT, PROMPT_CACHE_TTL, STATE_CACHE_TTL
-from storage import IO
 import json as _json
 
 def _log(msg):
@@ -32,8 +31,8 @@ class PromptCache:
         safe = file_path.replace("/", "_").replace(" ", "_").replace(os.sep, "_")
         return os.path.join(_TMP_CACHE_DIR, safe)
 
-    def get(self, file_path):
-        """读取文件内容（三级缓存）"""
+    def get(self, file_path, io=None):
+        """读取文件内容（三级缓存）。io: 可选的存储 IO 对象，用于 L3 回源读取。"""
         now = time.time()
 
         # 1. 内存缓存
@@ -55,8 +54,11 @@ class PromptCache:
         except Exception:
             pass
 
-        # 3. 本地文件
-        content = IO.read_text(file_path)
+        # 3. 通过 IO 对象回源读取
+        if io is None:
+            from storage import create_storage
+            io = create_storage()
+        content = io.read_text(file_path)
         if content is not None:
             with self._lock:
                 self._cache[file_path] = {"content": content, "expire_time": now + PROMPT_CACHE_TTL}
@@ -92,7 +94,7 @@ _prompt_cache = PromptCache()
 
 def load_memory(ctx):
     """加载某个用户的 memory.md"""
-    return _prompt_cache.get(ctx.memory_file)
+    return _prompt_cache.get(ctx.memory_file, io=ctx.IO)
 
 
 # ============ 对话窗口管理 ============
@@ -187,7 +189,7 @@ def apply_memory_updates(updates, ctx):
         return
 
     memory_file = ctx.memory_file
-    memory_text = IO.read_text(memory_file)
+    memory_text = ctx.IO.read_text(memory_file)
     if memory_text is None:
         _log(f"[记忆] 无法读取 memory.md ({ctx.user_id})，跳过记忆更新")
         return
@@ -258,7 +260,7 @@ def apply_memory_updates(updates, ctx):
             changed = True
 
     if changed:
-        ok = IO.write_text(memory_file, memory_text)
+        ok = ctx.IO.write_text(memory_file, memory_text)
         if ok:
             _log(f"[记忆] memory.md 已更新 ({ctx.user_id}): {len(updates)} 条")
             _prompt_cache.invalidate(memory_file)
@@ -300,8 +302,8 @@ def read_state_cached(ctx):
     except Exception:
         pass
 
-    # 3. 本地文件
-    data = IO.read_json(ctx.state_file) or {}
+    # 3. 通过 IO 回源读取
+    data = ctx.IO.read_json(ctx.state_file) or {}
     _update_state_cache(uid, data)
     _log(f"[State] 从文件读取 ({uid})")
     return copy.deepcopy(data)
@@ -323,7 +325,7 @@ def _update_state_cache(uid, state):
 
 def write_state_and_update_cache(state, ctx):
     """写入某用户的 state 并更新缓存"""
-    IO.write_json(ctx.state_file, state)
+    ctx.IO.write_json(ctx.state_file, state)
     _update_state_cache(ctx.user_id, state)
 
 

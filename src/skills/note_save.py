@@ -5,7 +5,6 @@ Skill: note.save
 支持纯文本和带附件的消息（图片/语音/视频/链接）。
 """
 import sys
-from storage import IO as OneDriveIO
 
 
 def _log(msg):
@@ -39,7 +38,7 @@ def execute(params, state, ctx):
     # 构建要写入的 Markdown 文本
     message = _format_message(content, attachment)
 
-    ok = OneDriveIO.append_to_quick_notes(ctx.quick_notes_file, message)
+    ok = ctx.IO.append_to_quick_notes(ctx.quick_notes_file, message)
 
     if ok:
         _log(f"[note.save] 已保存: {message[:60]}...")

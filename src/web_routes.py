@@ -15,8 +15,11 @@ from flask import Blueprint, request, jsonify, send_from_directory, redirect, ur
 from user_context import (
     verify_token, UserContext, get_all_users, update_user_status,
     SYSTEM_DIR, USAGE_LOG_FILE, DATA_DIR,
+    create_invite_code, get_all_invite_codes, delete_invite_code,
+    create_announcement, get_announcements, delete_announcement,
+    create_feedback, get_feedbacks, reply_feedback,
 )
-from config import ADMIN_TOKEN, LOG_FILE_KARVISFORALL, LOG_KARVIS_COMPOSE_DIR
+from config import ADMIN_TOKEN, LOG_FILE_KARVISFORALL
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -25,7 +28,8 @@ api_bp = Blueprint("api", __name__)
 
 
 def _log(msg):
-    print(msg, file=sys.stderr, flush=True)
+    ts = datetime.now(_BEIJING_TZ).strftime("%H:%M:%S")
+    print(f"{ts} {msg}", file=sys.stderr, flush=True)
 
 
 # ============================================================
@@ -118,7 +122,7 @@ def api_dashboard(user_id=None):
 
     # 速记统计
     try:
-        qn = _read_file_safe(ctx.quick_notes_file)
+        qn = _read_file_safe(ctx, ctx.quick_notes_file)
         today_str = datetime.now(_BEIJING_TZ).strftime("%Y-%m-%d")
         today_notes = [s for s in qn.split("\n## ")[1:] if s.strip().startswith(today_str)]
         result["note_count_today"] = len(today_notes)
@@ -132,7 +136,7 @@ def api_dashboard(user_id=None):
 
     # 待办统计
     try:
-        todo = _read_file_safe(ctx.todo_file)
+        todo = _read_file_safe(ctx, ctx.todo_file)
         pending = len([l for l in todo.split('\n') if l.strip().startswith('- [ ]')])
         done = len([l for l in todo.split('\n') if l.strip().startswith('- [x]')])
         result["todo_pending"] = pending
@@ -161,7 +165,7 @@ def api_dashboard(user_id=None):
 
     # 最新日记
     try:
-        daily_files = _list_files_safe(ctx.daily_notes_dir, "*.md")
+        daily_files = _list_files_safe(ctx, ctx.daily_notes_dir, "*.md")
         if daily_files:
             latest = sorted(daily_files, reverse=True)[0]
             result["latest_daily"] = {
@@ -175,7 +179,7 @@ def api_dashboard(user_id=None):
 
     # 记忆概要（section 数量 + 总条目数）
     try:
-        mem_content = _read_file_safe(ctx.memory_file)
+        mem_content = _read_file_safe(ctx, ctx.memory_file)
         if mem_content:
             mem_sections = [p for p in re.split(r'\n(?=## )', mem_content) if p.strip().startswith("## ")]
             mem_items = len([l for l in mem_content.split('\n') if l.strip().startswith("- ")])
@@ -195,7 +199,7 @@ def api_notes(user_id=None):
     ctx = _get_ctx(user_id)
     date_filter = request.args.get("date", "")
 
-    qn = _read_file_safe(ctx.quick_notes_file)
+    qn = _read_file_safe(ctx, ctx.quick_notes_file)
     if not qn:
         return jsonify({"notes": [], "has_more": False})
 
@@ -243,7 +247,7 @@ def api_todos(user_id=None):
     """GET /api/todos — 获取待办"""
     ctx = _get_ctx(user_id)
 
-    todo = _read_file_safe(ctx.todo_file)
+    todo = _read_file_safe(ctx, ctx.todo_file)
     pending = []
     done = []
 
@@ -264,7 +268,7 @@ def api_daily_list(user_id=None):
     ctx = _get_ctx(user_id)
 
     reports = []
-    files = _list_files_safe(ctx.daily_notes_dir, "*.md")
+    files = _list_files_safe(ctx, ctx.daily_notes_dir, "*.md")
     for f in sorted(files, reverse=True):
         name = f.replace(".md", "")
         rtype = "daily"
@@ -282,7 +286,7 @@ def api_daily_list(user_id=None):
         })
 
     # 也查情绪日记目录
-    emotion_files = _list_files_safe(ctx.emotion_notes_dir, "*.md")
+    emotion_files = _list_files_safe(ctx, ctx.emotion_notes_dir, "*.md")
     for f in sorted(emotion_files, reverse=True):
         name = f.replace(".md", "")
         reports.append({
@@ -306,15 +310,15 @@ def api_daily_detail(filename, user_id=None):
         safe_name = os.path.basename(filename)
         if not safe_name.endswith(".md"):
             safe_name += ".md"
-        filepath = os.path.join(ctx.emotion_notes_dir, safe_name)
+        filepath = _join_path(ctx, ctx.emotion_notes_dir, safe_name)
     else:
         # 安全检查：防止路径穿越
         safe_name = os.path.basename(filename)
         if not safe_name.endswith(".md"):
             safe_name += ".md"
-        filepath = os.path.join(ctx.daily_notes_dir, safe_name)
+        filepath = _join_path(ctx, ctx.daily_notes_dir, safe_name)
 
-    content = _read_file_safe(filepath)
+    content = _read_file_safe(ctx, filepath)
     if not content:
         return jsonify({"error": "文件不存在"}), 404
 
@@ -341,11 +345,11 @@ def api_archive_list(user_id=None):
     dirs_to_scan = {category: categories[category]} if category and category in categories else categories
 
     for cat, dir_path in dirs_to_scan.items():
-        files = _list_files_safe(dir_path, "*.md")
+        files = _list_files_safe(ctx, dir_path, "*.md")
         for f in sorted(files, reverse=True):
             # 读取第一行作为标题
-            filepath = os.path.join(dir_path, f)
-            first_line = _read_first_line(filepath)
+            filepath = _join_path(ctx, dir_path, f)
+            first_line = _read_first_line(ctx, filepath)
             notes.append({
                 "file": f,
                 "category": cat,
@@ -382,8 +386,8 @@ def api_archive_detail(filename, user_id=None):
     search_dirs = [categories[category]] if category and category in categories else categories.values()
 
     for dir_path in search_dirs:
-        filepath = os.path.join(dir_path, filename)
-        content = _read_file_safe(filepath)
+        filepath = _join_path(ctx, dir_path, filename)
+        content = _read_file_safe(ctx, filepath)
         if content:
             return jsonify({"content": content, "filename": filename})
 
@@ -401,7 +405,7 @@ def api_mood(user_id=None):
 
     # 情绪日记列表
     diaries = []
-    emotion_files = _list_files_safe(ctx.emotion_notes_dir, "*.md")
+    emotion_files = _list_files_safe(ctx, ctx.emotion_notes_dir, "*.md")
     for f in sorted(emotion_files, reverse=True):
         diaries.append({
             "file": f,
@@ -418,7 +422,7 @@ def api_memory(user_id=None):
     """GET /api/memory — 获取长期记忆（结构化解析 memory.md）"""
     ctx = _get_ctx(user_id)
 
-    content = _read_file_safe(ctx.memory_file)
+    content = _read_file_safe(ctx, ctx.memory_file)
     if not content:
         return jsonify({"sections": [], "total_items": 0, "last_updated": ""})
 
@@ -447,10 +451,10 @@ def api_memory(user_id=None):
         total_items += len(items)
         sections.append({"title": title, "icon": icon, "items": items})
 
-    # 获取文件修改时间
+    # 获取文件修改时间（仅 local 模式可获取精确时间）
     last_updated = ""
     try:
-        if os.path.exists(ctx.memory_file):
+        if ctx.storage_mode == "local" and os.path.exists(ctx.memory_file):
             mtime = os.path.getmtime(ctx.memory_file)
             last_updated = datetime.fromtimestamp(mtime, _BEIJING_TZ).strftime("%Y-%m-%d %H:%M")
     except Exception:
@@ -466,7 +470,7 @@ def api_books(user_id=None):
     ctx = _get_ctx(user_id)
 
     books = []
-    files = _list_files_safe(ctx.book_notes_dir, "*.md")
+    files = _list_files_safe(ctx, ctx.book_notes_dir, "*.md")
     for f in sorted(files, reverse=True):
         books.append({
             "file": f,
@@ -483,7 +487,7 @@ def api_media(user_id=None):
     ctx = _get_ctx(user_id)
 
     items = []
-    files = _list_files_safe(ctx.media_notes_dir, "*.md")
+    files = _list_files_safe(ctx, ctx.media_notes_dir, "*.md")
     for f in sorted(files, reverse=True):
         items.append({
             "file": f,
@@ -762,9 +766,9 @@ def api_admin_stats():
                 "user_id": d.get("user_id", ""),
                 "skill": d.get("skill", ""),
                 "elapsed_s": d.get("elapsed_s", 0),
-                "input": d.get("input", "")[:80],
-                "thinking": d.get("thinking", ""),
-                "reply": d.get("reply", "")[:200],
+                "input_type": d.get("input_type", ""),
+                "action": d.get("action", ""),
+                "has_reply": d.get("has_reply", False),
             } for d in recent_decisions],
             "stats": latency_stats,
         },
@@ -833,48 +837,271 @@ def _aggregate_error_logs():
     return error_groups
 
 
+@api_bp.route("/admin/users/<uid>/skills", methods=["GET"])
+@require_admin
+def api_admin_user_skills(uid):
+    """GET /api/admin/users/{uid}/skills — 查看用户 Skill 配置"""
+    from skill_loader import get_skill_metadata
+
+    ctx = _get_ctx(uid)
+    config = ctx.get_user_config()
+    skills_cfg = config.get("skills", {"mode": "blacklist", "list": []})
+
+    # 所有已注册 Skill 的元数据
+    all_meta = get_skill_metadata()
+    skill_list = []
+    for name, meta in sorted(all_meta.items()):
+        vis = meta.get("visibility", "public")
+        allowed = ctx.is_skill_allowed(name)
+        skill_list.append({
+            "name": name,
+            "visibility": vis,
+            "allowed": allowed,
+            "description": meta.get("description", ""),
+        })
+
+    return jsonify({
+        "user_id": uid,
+        "mode": skills_cfg.get("mode", "blacklist"),
+        "list": skills_cfg.get("list", []),
+        "skills": skill_list,
+    })
+
+
+@api_bp.route("/admin/users/<uid>/skills", methods=["POST"])
+@require_admin
+def api_admin_update_user_skills(uid):
+    """POST /api/admin/users/{uid}/skills — 更新用户 Skill 配置"""
+    ctx = _get_ctx(uid)
+    data = request.get_json(force=True, silent=True) or {}
+
+    mode = data.get("mode")
+    skill_list = data.get("list")
+
+    if mode not in ("blacklist", "whitelist"):
+        return jsonify({"error": "mode 必须为 blacklist 或 whitelist"}), 400
+    if not isinstance(skill_list, list):
+        return jsonify({"error": "list 必须为数组"}), 400
+
+    config = ctx.get_user_config()
+    skills_cfg = {"mode": mode, "list": skill_list}
+    config["skills"] = skills_cfg
+    ctx.save_user_config(config)
+    ctx._skills_config = skills_cfg  # 同步内存缓存
+
+    _log(f"[WebAPI] 更新用户 Skill 配置: uid={uid}, mode={mode}, list={skill_list}")
+    return jsonify({"ok": True, "user_id": uid, "skills": config["skills"]})
+
+
+@api_bp.route("/admin/users/<uid>/detail", methods=["GET"])
+@require_admin
+def api_admin_user_detail(uid):
+    """GET /api/admin/users/{uid}/detail — 用户运营详情（不含隐私内容）"""
+    ctx = _get_ctx(uid)
+    config = ctx.get_user_config()
+    result = {"user_id": uid}
+
+    # 1. 基本配置
+    result["config"] = {
+        "nickname": config.get("nickname", ""),
+        "ai_name": config.get("ai_name", "Karvis"),
+        "role": config.get("role", "user"),
+        "storage_mode": config.get("storage_mode", "local"),
+        "onboarding_step": config.get("onboarding_step", 0),
+        "preferences": config.get("preferences", {}),
+        "skills": config.get("skills", {"mode": "blacklist", "list": []}),
+        "daily_message_limit": config.get("daily_message_limit", 50),
+    }
+
+    # 2. 注册表信息
+    users = get_all_users()
+    user_reg = users.get(uid, {})
+    result["registry"] = user_reg
+
+    # 3. 最近决策日志（最新 20 条）
+    decisions = []
+    try:
+        if os.path.exists(ctx.decision_log_file):
+            from collections import deque
+            with open(ctx.decision_log_file, "r", encoding="utf-8") as f:
+                recent = list(deque(f, maxlen=20))
+            for line in recent:
+                line = line.strip()
+                if line:
+                    try:
+                        d = json.loads(line)
+                        decisions.append({
+                            "ts": d.get("ts", ""),
+                            "input_type": d.get("input_type", ""),
+                            "input": (d.get("input", "") or "")[:100],
+                            "skill": d.get("skill", ""),
+                            "action": d.get("action", ""),
+                            "elapsed_s": d.get("elapsed_s", 0),
+                            "has_reply": d.get("has_reply", False),
+                            "thinking": (d.get("thinking", "") or "")[:200],
+                        })
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        _log(f"[WebAPI] 读取决策日志失败 {uid}: {e}")
+    result["decisions"] = list(reversed(decisions))
+
+    # 4. 存储用量
+    storage = {"file_count": 0, "total_size_bytes": 0}
+    try:
+        if ctx.storage_mode == "local" and os.path.exists(ctx.base_dir):
+            for root, dirs, files in os.walk(ctx.base_dir):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    storage["file_count"] += 1
+                    try:
+                        storage["total_size_bytes"] += os.path.getsize(fpath)
+                    except OSError:
+                        pass
+            storage["total_size_mb"] = round(storage["total_size_bytes"] / (1024 * 1024), 2)
+    except Exception as e:
+        _log(f"[WebAPI] 计算存储用量失败 {uid}: {e}")
+    result["storage"] = storage
+
+    # 5. State 关键字段（运营诊断用）
+    state = _read_state_safe(ctx)
+    result["state_summary"] = {
+        "mood_scores_count": len(state.get("mood_scores", [])),
+        "mood_latest": state.get("mood_scores", [{}])[-1] if state.get("mood_scores") else None,
+        "nudge_streak": state.get("nudge_state", {}).get("streak", 0),
+        "checkin_pending": state.get("checkin_pending", False),
+        "last_daily_report": state.get("last_daily_report", ""),
+        "last_weekly_review": state.get("last_weekly_review", ""),
+        "last_monthly_review": state.get("last_monthly_review", ""),
+        "daily_top3": state.get("daily_top3", {}),
+    }
+
+    # 6. Token 消耗（该用户）
+    token_usage = {"total_tokens": 0, "calls": 0}
+    try:
+        if os.path.exists(USAGE_LOG_FILE):
+            with open(USAGE_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        e = json.loads(line)
+                        if e.get("user_id") == uid:
+                            token_usage["total_tokens"] += e.get("total_tokens", 0)
+                            token_usage["calls"] += 1
+                    except json.JSONDecodeError:
+                        continue
+    except Exception:
+        pass
+    result["token_usage"] = token_usage
+
+    return jsonify(result)
+
+
+@api_bp.route("/admin/users/<uid>/token", methods=["POST"])
+@require_admin
+def api_admin_generate_token(uid):
+    """POST /api/admin/users/{uid}/token — 为用户生成 Web 访问令牌"""
+    from user_context import generate_token
+    data = request.get_json(force=True, silent=True) or {}
+    expire_hours = data.get("expire_hours", 24)
+
+    users = get_all_users()
+    if uid not in users:
+        return jsonify({"error": f"用户 {uid} 不存在"}), 404
+
+    token = generate_token(uid, expire_hours=expire_hours)
+    web_url = f"{request.host_url}web/login?token={token}"
+
+    _log(f"[WebAPI] 管理员为用户 {uid} 生成令牌, expire_hours={expire_hours}")
+    return jsonify({"ok": True, "user_id": uid, "token": token, "web_url": web_url, "expire_hours": expire_hours})
+
+
+@api_bp.route("/admin/users/<uid>/config", methods=["POST"])
+@require_admin
+def api_admin_update_user_config(uid):
+    """POST /api/admin/users/{uid}/config — 更新用户配置（消息限额、偏好等）"""
+    ctx = _get_ctx(uid)
+    data = request.get_json(force=True, silent=True) or {}
+    config = ctx.get_user_config()
+
+    # 可更新字段白名单
+    if "daily_message_limit" in data:
+        config["daily_message_limit"] = int(data["daily_message_limit"])
+    if "preferences" in data and isinstance(data["preferences"], dict):
+        prefs = config.get("preferences", {})
+        prefs.update(data["preferences"])
+        config["preferences"] = prefs
+    if "onboarding_step" in data:
+        config["onboarding_step"] = int(data["onboarding_step"])
+
+    ctx.save_user_config(config)
+    _log(f"[WebAPI] 管理员更新用户配置: uid={uid}, keys={list(data.keys())}")
+    return jsonify({"ok": True, "user_id": uid, "config": config})
+
+
+@api_bp.route("/admin/system/action", methods=["POST"])
+@require_admin
+def api_admin_system_action():
+    """POST /api/admin/system/action — 手动触发系统动作"""
+    data = request.get_json(force=True, silent=True) or {}
+    action = data.get("action", "")
+    target_user = data.get("user_id", "")
+
+    valid_actions = [
+        "refresh_cache", "daily_init", "scheduler_tick",
+        "morning_report", "evening_checkin", "daily_report",
+        "todo_remind", "reflect_push", "mood_generate",
+        "weekly_review", "monthly_review", "nudge_check", "companion_check",
+    ]
+    if action not in valid_actions:
+        return jsonify({"error": f"无效的 action: {action}", "valid_actions": valid_actions}), 400
+
+    # 转发到内部 /system 端点
+    import requests as _requests
+    try:
+        payload = {"action": action}
+        if target_user:
+            payload["user_id"] = target_user
+        resp = _requests.post("http://127.0.0.1:9000/system", json=payload, timeout=60)
+        result = resp.json()
+        _log(f"[WebAPI] 管理员触发系统动作: action={action}, user={target_user or 'all'}, result_ok={result.get('ok')}")
+        return jsonify(result)
+    except Exception as e:
+        _log(f"[WebAPI] 系统动作执行失败: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @api_bp.route("/admin/logs", methods=["GET"])
 @require_admin
 def api_admin_logs():
-    """GET /api/admin/logs — 查看服务日志"""
-    import subprocess
+    """GET /api/admin/logs — 查看服务日志（V12 精简版）
+    参数: lines(最大行数), keyword(关键词), level(日志级别), user(用户ID)
+    """
     from collections import deque
 
-    project = request.args.get("project", "karvisforall")
     lines = min(int(request.args.get("lines", "200")), 2000)
     keyword = request.args.get("keyword", "").strip()
     level = request.args.get("level", "").upper()
+    user_filter = request.args.get("user", "").strip()
 
     log_lines = []
 
-    if project == "karvis":
-        # Karvis 个人版: 通过 docker compose logs 获取
-        try:
-            result = subprocess.run(
-                ["docker", "compose", "-f",
-                 os.path.join(LOG_KARVIS_COMPOSE_DIR, "docker-compose.yml"),
-                 "logs", "--tail", str(lines), "--no-color"],
-                capture_output=True, text=True, timeout=10,
-            )
-            raw = result.stdout or result.stderr or ""
-            for line in raw.splitlines():
-                # 去掉 Docker 容器名前缀 (e.g. "karvis-personal-1  | ")
-                idx = line.find("| ")
-                clean = line[idx + 2:] if idx != -1 else line
-                log_lines.append(clean)
-        except Exception as e:
-            log_lines = [f"[ERROR] 读取 Karvis 日志失败: {e}"]
-    else:
-        # KarvisForAll: 直接读取文件尾部
-        try:
-            if os.path.exists(LOG_FILE_KARVISFORALL):
-                with open(LOG_FILE_KARVISFORALL, "r", encoding="utf-8", errors="replace") as f:
-                    log_lines = list(deque(f, maxlen=lines))
-                log_lines = [l.rstrip("\n") for l in log_lines]
-            else:
-                log_lines = [f"[ERROR] 日志文件不存在: {LOG_FILE_KARVISFORALL}"]
-        except Exception as e:
-            log_lines = [f"[ERROR] 读取日志失败: {e}"]
+    # 读取 V12 服务日志
+    try:
+        if os.path.exists(LOG_FILE_KARVISFORALL):
+            with open(LOG_FILE_KARVISFORALL, "r", encoding="utf-8", errors="replace") as f:
+                log_lines = list(deque(f, maxlen=lines))
+            log_lines = [l.rstrip("\n") for l in log_lines]
+        else:
+            log_lines = [f"[WARN] 日志文件不存在: {LOG_FILE_KARVISFORALL}"]
+    except Exception as e:
+        log_lines = [f"[ERROR] 读取日志失败: {e}"]
+
+    # 用户过滤
+    if user_filter:
+        log_lines = [l for l in log_lines if user_filter.lower() in l.lower()]
 
     # 关键词过滤
     if keyword:
@@ -885,7 +1112,124 @@ def api_admin_logs():
     if level and level != "ALL":
         log_lines = [l for l in log_lines if level in l.upper()]
 
-    return jsonify({"lines": log_lines, "total": len(log_lines), "project": project})
+    return jsonify({"lines": log_lines, "total": len(log_lines), "project": "karvisforall"})
+
+
+# ============================================================
+# 邀请码 API — /api/admin/invite-codes/*
+# ============================================================
+
+@api_bp.route("/admin/invite-codes", methods=["GET"])
+@require_admin
+def api_admin_invite_codes_list():
+    """GET /api/admin/invite-codes — 获取所有邀请码"""
+    codes = get_all_invite_codes()
+    return jsonify({"codes": codes})
+
+
+@api_bp.route("/admin/invite-codes", methods=["POST"])
+@require_admin
+def api_admin_invite_codes_create():
+    """POST /api/admin/invite-codes — 生成邀请码"""
+    code = create_invite_code("admin")
+    _log(f"[WebAPI] 生成邀请码: {code}")
+    return jsonify({"ok": True, "code": code})
+
+
+@api_bp.route("/admin/invite-codes/<code>", methods=["DELETE"])
+@require_admin
+def api_admin_invite_codes_delete(code):
+    """DELETE /api/admin/invite-codes/{code} — 删除邀请码"""
+    ok = delete_invite_code(code)
+    if not ok:
+        return jsonify({"error": "邀请码不存在"}), 404
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# 公告 API — /api/admin/announcements/*
+# ============================================================
+
+@api_bp.route("/admin/announcements", methods=["GET"])
+@require_admin
+def api_admin_announcements_list():
+    """GET /api/admin/announcements — 获取所有公告"""
+    return jsonify({"announcements": get_announcements()})
+
+
+@api_bp.route("/admin/announcements", methods=["POST"])
+@require_admin
+def api_admin_announcements_create():
+    """POST /api/admin/announcements — 发布公告"""
+    data = request.get_json(force=True, silent=True) or {}
+    title = data.get("title", "").strip()
+    content = data.get("content", "").strip()
+    if not title:
+        return jsonify({"error": "标题不能为空"}), 400
+    ann = create_announcement(title, content)
+    _log(f"[WebAPI] 发布公告: {title}")
+    return jsonify({"ok": True, "announcement": ann})
+
+
+@api_bp.route("/admin/announcements/<ann_id>", methods=["DELETE"])
+@require_admin
+def api_admin_announcements_delete(ann_id):
+    """DELETE /api/admin/announcements/{id} — 删除公告"""
+    ok = delete_announcement(ann_id)
+    if not ok:
+        return jsonify({"error": "公告不存在"}), 404
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# 用户反馈 API — /api/admin/feedbacks/*
+# ============================================================
+
+@api_bp.route("/admin/feedbacks", methods=["GET"])
+@require_admin
+def api_admin_feedbacks_list():
+    """GET /api/admin/feedbacks — 获取所有用户反馈"""
+    return jsonify({"feedbacks": get_feedbacks()})
+
+
+@api_bp.route("/admin/feedbacks/<fb_id>/reply", methods=["POST"])
+@require_admin
+def api_admin_feedbacks_reply(fb_id):
+    """POST /api/admin/feedbacks/{id}/reply — 回复用户反馈"""
+    data = request.get_json(force=True, silent=True) or {}
+    reply_text = data.get("reply", "").strip()
+    if not reply_text:
+        return jsonify({"error": "回复内容不能为空"}), 400
+    ok = reply_feedback(fb_id, reply_text)
+    if not ok:
+        return jsonify({"error": "反馈不存在"}), 404
+    _log(f"[WebAPI] 回复反馈: {fb_id}")
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# 用户侧公告 + 反馈提交 API（无需管理员权限，用户 token 鉴权）
+# ============================================================
+
+@api_bp.route("/announcements", methods=["GET"])
+@require_auth
+def api_user_announcements(user_id=None):
+    """GET /api/announcements — 用户获取公告列表"""
+    anns = get_announcements()
+    return jsonify({"announcements": anns[:10]})  # 最近 10 条
+
+
+@api_bp.route("/feedback", methods=["POST"])
+@require_auth
+def api_user_feedback(user_id=None):
+    """POST /api/feedback — 用户提交反馈"""
+    data = request.get_json(force=True, silent=True) or {}
+    content = data.get("content", "").strip()
+    if not content:
+        return jsonify({"error": "反馈内容不能为空"}), 400
+    fb = create_feedback(user_id, content)
+    _log(f"[WebAPI] 用户 {user_id} 提交反馈: {content[:50]}")
+    return jsonify({"ok": True, "feedback": fb})
 
 
 # ============================================================
@@ -965,52 +1309,65 @@ def web_static_file(filename):
 
 
 # ============================================================
-# 工具函数
+# 工具函数（V12: 统一走 ctx.IO，兼容 Local/OneDrive）
 # ============================================================
 
-def _read_file_safe(filepath):
-    """安全读取文件，失败返回空字符串"""
+def _join_path(ctx, base_dir, filename):
+    """拼接路径：本地用 os.path.join，OneDrive 用 / 拼接"""
+    if ctx.storage_mode == "local":
+        return os.path.join(base_dir, filename)
+    return f"{base_dir}/{filename}"
+
+
+def _read_file_safe(ctx, filepath):
+    """安全读取文件，通过 ctx.IO 抽象层，失败返回空字符串"""
     try:
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                return f.read()
+        content = ctx.IO.read_text(filepath)
+        return content if content is not None else ""
     except Exception as e:
         _log(f"[WebAPI] 读取文件失败 {filepath}: {e}")
     return ""
 
 
 def _read_state_safe(ctx):
-    """安全读取用户 state"""
+    """安全读取用户 state（JSON）"""
     try:
-        content = _read_file_safe(ctx.state_file)
-        if content:
-            return json.loads(content)
+        data = ctx.IO.read_json(ctx.state_file)
+        return data if data is not None else {}
     except Exception as e:
         _log(f"[WebAPI] 读取 state 失败: {e}")
     return {}
 
 
-def _list_files_safe(dir_path, pattern="*"):
-    """安全列出目录下的文件"""
+def _list_files_safe(ctx, dir_path, pattern="*"):
+    """安全列出目录下的文件，通过 ctx.IO.list_children 抽象层。
+    返回文件名列表（不含路径），支持 fnmatch pattern 过滤。
+    """
+    import fnmatch as _fnmatch
     try:
-        if os.path.exists(dir_path):
-            import glob
-            files = glob.glob(os.path.join(dir_path, pattern))
-            return [os.path.basename(f) for f in files if os.path.isfile(f)]
+        children = ctx.IO.list_children(dir_path)
+        if children is None:
+            return []
+        # list_children 返回 [{"name": ..., "file": {...}}, ...]
+        # 只取文件（有 "file" key 的），排除文件夹
+        names = [c["name"] for c in children if "file" in c]
+        if pattern and pattern != "*":
+            names = [n for n in names if _fnmatch.fnmatch(n, pattern)]
+        return names
     except Exception as e:
         _log(f"[WebAPI] 列出文件失败 {dir_path}: {e}")
     return []
 
 
-def _read_first_line(filepath):
+def _read_first_line(ctx, filepath):
     """读取文件第一行（去除 # 标记），用于获取标题"""
     try:
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                line = f.readline().strip()
-                if line.startswith("#"):
-                    line = line.lstrip("#").strip()
-                return line
+        content = ctx.IO.read_text(filepath)
+        if content:
+            line = content.split("\n", 1)[0].strip()
+            if line.startswith("#"):
+                line = line.lstrip("#").strip()
+            return line
     except Exception:
         pass
     return ""

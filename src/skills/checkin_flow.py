@@ -13,7 +13,6 @@ Skill: checkin.*
 import re
 import sys
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
 
 
 def _log(msg):
@@ -238,7 +237,7 @@ def finish(state, ctx, timeout=False):
 
     # 写入 Daily Note
     daily_note_path = f"{ctx.daily_notes_dir}/{checkin_date}.md"
-    _write_to_daily_note(daily_note_path, checkin_date, checkin_content)
+    _write_to_daily_note(ctx, daily_note_path, checkin_date, checkin_content)
 
     # 记录 mood_scores
     if score is not None:
@@ -284,9 +283,9 @@ def finish(state, ctx, timeout=False):
         return f"✅ 今日复盘完成！{score_text}\n已保存到 {checkin_date}.md\n晚安~"
 
 
-def _write_to_daily_note(file_path, date_str, checkin_content):
+def _write_to_daily_note(ctx, file_path, date_str, checkin_content):
     """将打卡内容写入 Daily Note（替换或追加 ## 每日复盘 section）"""
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
 
     if existing is None:
         _log(f"[checkin] 无法读取 Daily Note，尝试创建: {file_path}")
@@ -307,7 +306,7 @@ def _write_to_daily_note(file_path, date_str, checkin_content):
         # 全新的 Daily Note
         new_content = f"# {date_str}\n\n{checkin_content}"
 
-    ok = OneDriveIO.write_text(file_path, new_content)
+    ok = ctx.IO.write_text(file_path, new_content)
     if ok:
         _log(f"[checkin] 已写入 Daily Note: {file_path}")
     else:

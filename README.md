@@ -1,699 +1,376 @@
-# KarvisForAll — 多用户 AI 生活助手
+<h1 align="center">Karvis — 住在微信里的 AI 生活管家</h1>
 
-> 基于企业微信的 AI 生活助手，支持 2-5 人共享一套部署，每人拥有独立的数据空间。
-> 记速记、管待办、写日记、追情绪、养习惯——通过对话完成一切。
+<p align="center">
+  在微信里说句话，它帮你记笔记、管待办、写日记、追踪情绪。<br>
+  支持 2-5 人共享部署，每人独立数据空间。月 Token 成本不到一块钱。
+</p>
 
----
-
-## 目录
-
-- [它能做什么](#它能做什么)
-- [准备工作](#准备工作)
-- [部署方式一：一键脚本（推荐新手）](#部署方式一一键脚本推荐新手)
-- [部署方式二：Docker（推荐服务器）](#部署方式二docker推荐服务器)
-- [部署方式三：轻量云服务器手动部署](#部署方式三轻量云服务器手动部署)
-- [让企业微信连上 Karvis](#让企业微信连上-karvis)
-- [本地测试（发消息之前先确认能跑）](#本地测试发消息之前先确认能跑)
-- [邀请朋友加入](#邀请朋友加入)
-- [Web 查看页面](#web-查看页面)
-- [管理员后台](#管理员后台)
-- [环境变量完整清单](#环境变量完整清单)
-- [目录结构说明](#目录结构说明)
-- [常见问题 FAQ](#常见问题-faq)
-- [成本估算](#成本估算)
+<p align="center">
+  <a href="https://karvis.top">官网</a> · <a href="#快速开始">快速开始</a> · <a href="#功能一览">功能</a> · <a href="docs/architecture.md">架构</a> · <a href="CHANGELOG.md">更新日志</a>
+</p>
 
 ---
 
-## 它能做什么
+## 功能一览
 
-| 功能 | 说明 |
+| 能力 | 说明 |
 |---|---|
-| 📝 速记 | 发消息自动记录，支持文字/语音/图片/链接 |
-| ✅ 待办 | "帮我记个待办：明天交报告" |
-| 📖 日记 | 每晚自动生成日报，总结你一天说了什么 |
-| 😊 情绪追踪 | AI 感知你的情绪，生成情绪曲线 |
-| 📚 读书/影视笔记 | "刚看完《三体》，记一下感想" |
-| 🔄 周报/月报 | 自动复盘，不用自己动手 |
-| ⚙️ 个性化 | 对话设置昵称、AI 说话风格 |
-| 🌐 Web 查看 | 浏览器查看自己的所有数据（只读） |
+| 📝 随手记录 | 发消息自动记录，支持文字 / 语音 / 图片 / 链接 |
+| ✅ 待办管理 | "帮我记个待办：明天交报告" |
+| 🌅 晨报 & 日报 | 8 点叫你起床，晚上自动生成复盘 |
+| 😊 情绪追踪 | AI 感知情绪，生成情绪曲线 |
+| 🧠 三层记忆 | 工作记忆 + 长期记忆 + 知识库，越用越懂你 |
+| 📚 读书 / 影视笔记 | "刚看完《三体》，记一下感想" |
+| 🔄 周报 / 月报 | 自动复盘，不用动手 |
+| 💬 有温度的陪伴 | 你说胃疼它会关心你，加班到很晚它会心疼 |
+| 🌐 Web 页面 | 浏览器查看所有数据：速记、待办、日记、情绪曲线 |
 
 每个用户的数据**完全隔离**，你看不到别人的，别人也看不到你的。
 
 ---
 
-## 准备工作
+## 快速开始
 
-开始之前，你需要准备这些东西（**一共 3 样**）：
+> **三步搞定**：准备钥匙 → 部署服务 → 连上企微
 
-### 1. DeepSeek API Key（必须有）
+### 第一步：准备两把钥匙
 
-这是 AI 的大脑，KarvisForAll 靠它理解你说的话。
+| 钥匙 | 在哪拿 | 说明 |
+|---|---|---|
+| **DeepSeek API Key** | [platform.deepseek.com](https://platform.deepseek.com/) | AI 的大脑。注册 → API Keys → 创建。充 10 块够用很久 |
+| **企业微信应用** | [work.weixin.qq.com](https://work.weixin.qq.com/) | Karvis 住的地方。用微信扫码注册企业（不需要真的是公司） |
 
-1. 打开 https://platform.deepseek.com/
-2. 注册账号 → 左侧菜单「API Keys」→ 创建一个
-3. 充值一点余额（10 块钱够用很久）
-4. 复制 API Key，长这样：`sk-xxxxxxxxxxxxxxxx`
+#### 企微应用怎么建
 
-> 💡 也支持腾讯云 lkeap 的 DeepSeek（地址换成 `https://api.lkeap.cloud.tencent.com/v1`）
+1. 登录[企微管理后台](https://work.weixin.qq.com/wework_admin/frame) → 应用管理 → 创建应用
+2. 记下这 5 样东西（后面要填）：
 
-```
-腾讯云：
-sk-C8HI5gioJpHXTsmk6l21RgXdyGpNk1AgRfUyNKaS04IH1YjV
-```
-
-### 2. 企业微信应用（必须有）
-
-这是 Karvis 住的地方。
-
-1. 打开 https://work.weixin.qq.com/ → 注册一个企业（用你的微信扫码就行，不需要真的是公司）
-2. 登录管理后台 → 应用管理 → 创建应用
-3. 记下这些信息（后面要填）：
-
-| 在哪找 | 叫什么 |
+| 在哪找 | 什么东西 |
 |---|---|
 | 企业信息页 | **企业 ID**（Corp ID） |
 | 应用详情页 | **AgentId** |
 | 应用详情页 | **Secret** |
-| 应用详情页 → 接收消息 → 设置 API 接收 | **Token** 和 **EncodingAESKey**（点随机生成即可） |
+| 应用详情 → 接收消息 → 设置 API 接收 | **Token**（点随机生成） |
+| 同上 | **EncodingAESKey**（点随机生成） |
 
-> ⚠️ 「接收消息」的 URL 先不填，等 Karvis 启动后再填。
+> ⚠️ 「接收消息」的 URL **先不填**，等 Karvis 启动后再填。
 
-```
-Corp ID：wwcd9cd8b12fae39c4
-AgentId：1000005
-Secret：f6snq69mV-rm40X1npitpHEwWuMdG3z7UmmdZzfQoYU
-Token：j9TJjnTYOaNz5n6
-EncodingAESKey：kigdMYBtBSQTR1iTY2aiuExqSDI4oJfUWhYFfCy50bg
-```
-### 3. 一台服务器（或你的电脑）
-
-Karvis 需要一个 24 小时运行的地方。选一个就行：
-
-| 方案 | 适合谁 | 费用 |
-|---|---|---|
-| **你自己的电脑** | 先试试能不能跑 | 免费，但关机就断 |
-| **腾讯云轻量服务器** | 长期使用（推荐） | ¥30-60/月 |
-| **任意 Linux 服务器** | 有现成服务器的人 | — |
-
-> 服务器推荐：腾讯云轻量应用服务器，1 核 1G 的最便宜款就够用。
-
-### 怎么把代码传到服务器
-
-目前代码还没有上传到 GitHub，你需要手动把 `KarvisForAll` 文件夹传到服务器上。
-
-**方法一：scp 命令（Mac/Linux 终端）**
-
-```bash
-# 在你的电脑上执行，把整个文件夹传到服务器
-scp -r KarvisForAll root@你的服务器IP:/root/
-```
-
-**方法二：用 SFTP 工具（推荐不熟悉命令行的人）**
-
-1. 下载 [FileZilla](https://filezilla-project.org/)（免费）或 [Cyberduck](https://cyberduck.io/)
-2. 连接你的服务器（填 IP、用户名 root、密码）
-3. 把 `KarvisForAll` 文件夹拖到服务器的 `/root/` 目录下
-
-**方法三：打包后上传**
-
-```bash
-# 在你的电脑上打包
-tar czf KarvisForAll.tar.gz KarvisForAll/
-
-# 上传到服务器
-scp KarvisForAll.tar.gz root@你的服务器IP:/root/
-
-# 在服务器上解压
-ssh root@你的服务器IP
-tar xzf KarvisForAll.tar.gz
-```
+> 💡 **详细图文教程**见 [docs/wechat-setup.md](docs/wechat-setup.md)
 
 ---
 
-## 部署方式一：一键脚本（推荐新手）
+### 第二步：部署 Karvis
 
-适合在**你自己电脑**上试用，或在服务器上快速部署。
+选一个适合你的方式：
 
-### 步骤
+<details>
+<summary><b>🐳 方式一：Docker 一键部署（推荐，最稳定）</b></summary>
+
+适合：有服务器的人（腾讯云轻量 1C1G 就够，约 ¥30/月）
 
 ```bash
-# 第 1 步：进入项目目录（把代码文件夹放到你想要的位置）
-cd KarvisForAll
+# 1. 克隆代码
+git clone https://github.com/sameencai/KarvisForYou.git
+cd KarvisForYou
 
-# 第 2 步：运行安装脚本（它会一步步引导你填配置）
+# 2. 配置环境变量（把模板复制一份，填入你的真实值）
+cp .env.example src/.env
+nano src/.env
+
+# 3. 启动
+cd deploy
+docker compose up -d
+
+# 4. 查看日志，确认启动成功
+docker logs karvis
+```
+
+看到 `Running on http://0.0.0.0:9000` 就说明成功了。
+
+> 没装 Docker？运行 `curl -fsSL https://get.docker.com | sh` 一键安装。
+
+</details>
+
+<details>
+<summary><b>📜 方式二：一键脚本（推荐新手/本地试用）</b></summary>
+
+适合：先在自己电脑上跑跑看、或者不想用 Docker 的人
+
+```bash
+git clone https://github.com/sameencai/KarvisForYou.git
+cd KarvisForYou
 ./setup.sh
 ```
 
-脚本会自动完成：
-- ✅ 检查 Python 版本（需要 3.9+）
-- ✅ 安装依赖
-- ✅ 引导你填写 DeepSeek API Key、企微配置
-- ✅ 自动生成管理员令牌（**请记下来！**）
-- ✅ 安装内网穿透工具（cloudflared）
-- ✅ 启动 Karvis + 生成公网 URL
+脚本会自动：检查 Python → 安装依赖 → 引导你填配置 → 安装内网穿透 → 启动服务 → 生成公网 URL。
 
-```
-已自动生成管理员令牌: fde4a659337541f09e4234c4
-你的公网 IP: 112.24.112.171
-```
+> 需要 Python 3.9+。Windows 用户建议用 WSL。
 
-启动成功后你会看到类似这样的输出：
+</details>
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║  公网 URL 已生成!                                            ║
-╚══════════════════════════════════════════════════════════════╝
-
-  你的公网地址: https://xxx-xxx-xxx.trycloudflare.com
-
-  去企微后台 → 应用 → 接收消息 → API 接收 → URL 填:
-  https://xxx-xxx-xxx.trycloudflare.com/wework
-```
-
-> ⚠️ cloudflared 的地址**每次重启都会变**。如果你需要稳定地址，请看下面的服务器部署方案。
-
----
-
-## 部署方式二：Docker（推荐服务器）
-
-适合在**服务器**上长期运行，最简单稳定。
-
-### 前置要求
-
-服务器上需要安装 Docker 和 Docker Compose。如果没装过：
+<details>
+<summary><b>🔧 方式三：手动部署</b></summary>
 
 ```bash
-# Ubuntu/Debian 一键安装 Docker
-curl -fsSL https://get.docker.com | sh
-sudo systemctl start docker
-sudo systemctl enable docker
+git clone https://github.com/sameencai/KarvisForYou.git
+cd KarvisForYou/src
 
-# 安装 Docker Compose（如果 docker compose 命令不可用）
-sudo apt install docker-compose -y
+# 安装依赖
+pip3 install -r requirements.txt
+
+# 配置
+cp ../.env.example .env
+nano .env    # 填入你的配置
+
+# 启动
+python3 app.py
+
+# 后台运行（可选）
+nohup python3 app.py > karvis.log 2>&1 &
 ```
 
-### 步骤
+长期运行建议配置 systemd，详见[运维手册](docs/operations.md)。
+
+</details>
+
+#### .env 最少只要填这些
 
 ```bash
-# 第 1 步：把代码文件夹上传到服务器，然后进入目录
-cd KarvisForAll
-
-# 第 2 步：配置环境变量
-cp .env.example src/.env
-nano src/.env          # 用你喜欢的编辑器打开，填入真实值
-```
-
-打开 `src/.env` 后，你**至少需要填这些**（把等号后面的值换成你自己的）：
-
-```bash
+# AI 大脑
 DEEPSEEK_API_KEY=sk-你的key
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+
+# 企业微信
 WEWORK_CORP_ID=你的企业ID
 WEWORK_AGENT_ID=你的AgentID
 WEWORK_CORP_SECRET=你的Secret
 WEWORK_TOKEN=你的Token
 WEWORK_ENCODING_AES_KEY=你的AESKey
-DEFAULT_USER_ID=你的企微用户ID
-ADMIN_TOKEN=随便写一个长密码用于管理后台
+
+# 你的企微用户 ID（通讯录里点自己能看到）
+DEFAULT_USER_ID=你的用户ID
+
+# 管理员密码（随便写一个长密码）
+ADMIN_TOKEN=随便写一个长密码
 ```
 
-> 💡 `DEFAULT_USER_ID` 怎么找？登录企微管理后台 → 通讯录 → 点击你自己 → 账号就是你的用户 ID。
-
-```bash
-# 第 3 步：启动！
-cd deploy
-docker-compose up -d
-
-# 查看是否启动成功
-docker logs karvis
-```
-
-看到这样的输出就说明成功了：
-
-```
-[Init] 系统目录已就绪: /app/data/_karvis_system
-[Scheduler] 内置调度器已启动，共 10 个定时任务
- * Running on all addresses (0.0.0.0)
- * Running on http://127.0.0.1:9000
-```
-
-### 常用 Docker 命令
-
-```bash
-docker-compose up -d        # 启动（后台运行）
-docker-compose down          # 停止
-docker-compose restart       # 重启
-docker logs -f karvis        # 查看实时日志
-docker logs karvis --tail 50 # 查看最近 50 行日志
-```
+> 完整配置项说明见 [.env.example](.env.example)，注释很详细。
 
 ---
 
-## 部署方式三：轻量云服务器手动部署
+### 第三步：连上企业微信
 
-如果你不想用 Docker，可以直接在服务器上运行。
+Karvis 启动后，你需要告诉企微"消息往哪发"。**这是新手最容易卡住的一步**，别急，跟着做：
 
-```bash
-# 第 1 步：安装 Python（Ubuntu 通常已自带）
-sudo apt update
-sudo apt install python3 python3-pip -y
+#### 你有公网 IP 的服务器？（最简单）
 
-# 第 2 步：把代码文件夹上传到服务器，然后进入目录
-cd KarvisForAll/src
-
-# 第 3 步：安装依赖
-pip3 install -r requirements.txt
-
-# 第 4 步：配置环境变量
-cp ../.env.example .env
-nano .env               # 填入你的配置（参考上面的说明）
-
-# 第 5 步：启动
-python3 app.py
-```
-
-### 让它在后台持续运行（关掉终端也不会停）
-
-```bash
-# 方法一：nohup（最简单）
-nohup python3 app.py > karvis.log 2>&1 &
-
-# 查看日志
-tail -f karvis.log
-
-# 停止
-ps aux | grep app.py
-kill <PID>
-```
-
-```bash
-# 方法二：systemd（推荐，开机自启）
-sudo tee /etc/systemd/system/karvis.service << 'EOF'
-[Unit]
-Description=KarvisForAll AI Assistant
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/KarvisForAll/src
-ExecStart=/usr/bin/python3 app.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable karvis    # 开机自启
-sudo systemctl start karvis     # 启动
-sudo systemctl status karvis    # 查看状态
-journalctl -u karvis -f         # 查看日志
-```
-
-> 把 `/root/KarvisForAll/src` 换成你实际的代码路径。
-
----
-
-## 让企业微信连上 Karvis
-
-Karvis 启动后，你需要告诉企微「消息发到哪」。
-
-### 如果你在服务器上（有公网 IP）
-
-1. 打开企微管理后台 → 你的应用 → **接收消息** → 设置 API 接收
+1. 企微管理后台 → 你的应用 → **接收消息** → 设置 API 接收
 2. URL 填：`http://你的服务器IP:9000/wework`
-3. Token 和 EncodingAESKey 填你 `.env` 里设置的值
-4. 点保存
+3. Token 和 EncodingAESKey 填 `.env` 里的值
+4. 点保存 ✅
 
-> ⚠️ 还需要配置**企业可信 IP**：应用详情 → 企业可信 IP → 填入你的服务器公网 IP。
-> 不配这个，Karvis 能收到消息但**发不出去**。
+> ⚠️ 别忘了配**企业可信 IP**：应用详情 → 企业可信 IP → 填你的服务器公网 IP。不配这个，Karvis 能收消息但**发不出去**。
 
-### 如果你在自己电脑上（没有公网 IP）
+#### 没有公网 IP？用 Cloudflare Tunnel（免费）
 
-需要用内网穿透工具把本地端口暴露到公网：
+这是零成本把本地服务暴露到公网的方法，**不需要买域名，不需要备案**：
 
 ```bash
-# cloudflared（setup.sh 会自动安装）
+# 安装 cloudflared（Mac）
+brew install cloudflared
+
+# 安装 cloudflared（Ubuntu/Debian）
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install cloudflared
+
+# 启动隧道
 cloudflared tunnel --url http://localhost:9000
-
-# 它会输出一个公网地址，类似：
-# https://abc-def-ghi.trycloudflare.com
 ```
 
-然后去企微后台填：`https://abc-def-ghi.trycloudflare.com/wework`
+它会输出一个地址，类似 `https://abc-def-ghi.trycloudflare.com`。
 
-### 验证连接
+去企微后台填：`https://abc-def-ghi.trycloudflare.com/wework`
 
-企微后台填好 URL 后，在企微 app 里找到你的应用，发一条消息（比如"你好"）。
+> 💡 如果你用 `setup.sh`，这一步是**全自动**的。
+>
+> ⚠️ 免费隧道地址每次重启会变。想要固定地址，可以登录 Cloudflare 创建命名隧道（仍然免费），详见 [Cloudflare 文档](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)。
 
-**成功的标志**：Karvis 回复了你一条欢迎消息（首次使用会引导你设置昵称）。
+#### 验证连接
 
-**如果没收到回复**，检查：
-1. 服务器日志有没有收到请求（搜 `[handle_message]`）
-2. 企业可信 IP 有没有配
-3. Token / AESKey 是否和企微后台一致
+在企微 app 里找到你的应用，发一条"你好"。
+
+- ✅ **成功**：Karvis 回复欢迎消息，引导你设置昵称
+- ❌ **没回复**？看[常见问题](#常见问题)排查
 
 ---
 
-## 本地测试（发消息之前先确认能跑）
+## 邀请朋友
 
-### 快速健康检查
-
-Karvis 启动后，在浏览器里打开：
-
-```
-http://你的地址:9000/web/login
-```
-
-能看到登录页面就说明 Web 部分正常。
-
-### 运行自动化测试
-
-```bash
-cd KarvisForAll
-python tests/test_isolation.py
-```
-
-会运行 111 项检查，包括：
-- 多用户数据隔离
-- 令牌生成/验证/过期
-- 消息限流
-- 用户挂起/激活
-- 所有 API 接口
-- 所有 Web 页面
-
-全部通过会显示：`✓ 全部通过！`
-
-### 检查模块加载
-
-```bash
-cd KarvisForAll/src
-python3 -c "from skill_loader import load_skill_registry; r=load_skill_registry(); print(f'Skills: {len(r)}')"
-```
-
-应该输出 `Skills: 37`。
-
----
-
-## 邀请朋友加入
-
-### 第 1 步：把朋友加入企业
-
-1. 企微管理后台 → 通讯录 → 添加成员
-2. 让朋友用微信扫描邀请二维码
-3. 确保朋友能看到你创建的应用（应用详情 → 可见范围 → 设为全公司或指定部门）
-
-### 第 2 步：朋友开始使用
-
-朋友在企微 app 里找到应用，**直接发消息就行**。
-
-- 第一条消息会自动触发注册
-- Karvis 会发送欢迎消息，引导设置昵称
-- 之后正常聊天即可
-
-**不需要任何额外配置**，发消息就能用。
-
-### 第 3 步：朋友查看自己的数据
-
-朋友可以对 Karvis 说：
-
-```
-给我查看链接
-```
-
-Karvis 会回复一个链接，点开就能在浏览器里看到自己的速记、待办、日记等。
-
-> 链接有效期 24 小时，过期后再说一次「给我查看链接」就行。
+1. 企微管理后台 → 通讯录 → 添加成员（微信扫码就行）
+2. 确保朋友能看到应用（应用详情 → 可见范围 → 全公司）
+3. 朋友直接给应用发消息，**自动注册，零配置**
 
 ---
 
 ## Web 查看页面
 
-每个用户可以通过浏览器查看自己的数据（只读，不能修改）。
-
-### 获取方式
-
-在企微里对 Karvis 说「给我查看链接」，会收到一个链接。
-
-### 包含页面
+在企微里对 Karvis 说「给我查看链接」，会收到一个浏览器链接。
 
 | 页面 | 内容 |
 |---|---|
-| 📊 概览 | 今日速记数、待办进度、情绪曲线、连续打卡天数 |
-| 📝 速记 | 所有速记记录，支持按日期筛选 |
-| ✅ 待办 | 进行中/已完成的待办事项 |
+| 📊 概览 | 今日速记数、待办进度、情绪曲线、打卡天数 |
+| 📝 速记 | 所有速记记录，按日期筛选 |
+| ✅ 待办 | 进行中 / 已完成 |
 | 📖 日记 | 日报、周报、月报、情绪日记 |
-| 📂 笔记 | 读书笔记、影视笔记、工作笔记等分类归档 |
-| 😊 情绪 | 30 天情绪折线图 + 情绪日记列表 |
+| 📂 笔记 | 读书 / 影视 / 工作笔记分类归档 |
+| 🧠 记忆 | 长期记忆列表 |
+| 😊 情绪 | 30 天情绪折线图 |
 
-### 重要提醒
-
-- 链接包含**访问令牌**，不要分享给别人
-- 令牌默认 24 小时有效，可通过 `WEB_TOKEN_EXPIRE_HOURS` 环境变量调整
-- 如果你部署在服务器上，需要设置 `WEB_DOMAIN` 环境变量（否则链接会指向 127.0.0.1）
-
-```bash
-# 在 .env 中设置（换成你的域名或 IP:端口）
-WEB_DOMAIN=你的服务器IP:9000
-```
+> 链接有效期 24 小时，过期后再说一次「给我查看链接」。
+>
+> 部署在服务器上需要设 `WEB_DOMAIN=你的IP:9000`，否则链接指向 localhost。
 
 ---
 
 ## 管理员后台
 
-管理员可以通过 Web 页面查看所有用户的使用情况。
+浏览器打开 `http://你的地址:9000/web/admin`，输入 `ADMIN_TOKEN`。
 
-### 访问方式
-
-浏览器打开：
-
-```
-http://你的地址:9000/web/admin
-```
-
-输入你在 `.env` 里设置的 `ADMIN_TOKEN`。
-
-### 功能
-
-| 功能 | 说明 |
-|---|---|
-| 用户列表 | 所有注册用户、注册时间、最近活跃时间、消息数 |
-| LLM 用量 | 总 token 用量、按用户分组的用量统计 |
-| 成本估算 | 根据 token 用量估算 LLM 费用 |
-| 用量图表 | 最近 7 天的用量柱状图 |
-| 管理操作 | 挂起/激活用户（挂起后该用户无法使用 Karvis） |
+可以查看：用户列表、LLM 用量、成本估算、用量图表。可以操作：挂起 / 激活用户。
 
 ---
 
-## 环境变量完整清单
+## 技术架构
 
-### 必填项
+```
+用户手机 → 企业微信 → /wework → 解密 → 异步处理
+                                         ↓
+                                    brain.py（AI 大脑）
+                                    ├── Flash 层（Qwen - 快速响应）
+                                    ├── Main 层（DeepSeek V3 - 主力）
+                                    └── Think 层（DeepSeek R - 深度推理）
+                                         ↓
+                                    24 个技能模块（43 个 Skill）
+                                         ↓
+                                    存储（本地 / OneDrive → Obsidian）
+```
 
-| 变量 | 说明 | 示例 |
-|---|---|---|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | `sk-xxxxxx` |
-| `DEEPSEEK_BASE_URL` | DeepSeek API 地址 | `https://api.deepseek.com/v1` |
-| `WEWORK_CORP_ID` | 企微企业 ID | `ww1234567890` |
-| `WEWORK_AGENT_ID` | 应用 AgentID | `1000003` |
-| `WEWORK_CORP_SECRET` | 应用 Secret | `xxxxxx` |
-| `WEWORK_TOKEN` | 回调 Token | `xxxxxx` |
-| `WEWORK_ENCODING_AES_KEY` | 回调加密密钥 | `xxxxxx` |
-| `DEFAULT_USER_ID` | 你自己的企微用户 ID | `zhangsan` |
-| `ADMIN_TOKEN` | 管理员后台密码 | `my-secret-123` |
-
-### 可选项（有默认值，不填也能跑）
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `DEEPSEEK_MODEL` | `deepseek-v3.2` | 模型名称 |
-| `QWEN_API_KEY` | 空 | Qwen API Key（留空则全部用 DeepSeek） |
-| `QWEN_BASE_URL` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Qwen API 地址 |
-| `QWEN_MODEL` | `qwen-plus-latest` | Qwen 模型名 |
-| `QWEN_VL_MODEL` | `qwen-vl-max` | Qwen 视觉模型（图片理解用） |
-| `DAILY_MESSAGE_LIMIT` | `50` | 每人每天最多发多少条消息 |
-| `WEB_TOKEN_EXPIRE_HOURS` | `24` | Web 查看链接有效多少小时 |
-| `WEB_DOMAIN` | `127.0.0.1:9000` | Web 查看链接的域名（部署到服务器必须改） |
-| `DATA_DIR` | `./data` | 数据保存目录 |
-| `INACTIVE_DAYS_THRESHOLD` | `7` | 多少天不活跃就不触发定时任务 |
-| `TENCENT_APPID` | 空 | 腾讯云 ASR（语音转文字，不填则语音功能不可用） |
-| `TENCENT_SECRET_ID` | 空 | 腾讯云 SecretID |
-| `TENCENT_SECRET_KEY` | 空 | 腾讯云 SecretKey |
-| `SENIVERSE_KEY` | 空 | 心知天气 API Key（不填则没有天气播报） |
-| `WEATHER_CITY` | `深圳` | 天气查询城市 |
-| `PROCESS_ENDPOINT_URL` | `http://127.0.0.1:9000/process` | 内部处理端点，不用改 |
+> 详细架构文档见 [docs/architecture.md](docs/architecture.md)
 
 ---
 
-## 目录结构说明
+## 项目结构
 
 ```
 KarvisForAll/
-├── setup.sh                 ← 一键安装脚本
-├── .env.example             ← 环境变量模板（复制为 src/.env）
-│
-├── src/                     ← 核心代码
-│   ├── app.py               ← 主程序入口（Flask 服务器）
-│   ├── brain.py             ← AI 大脑（理解消息 → 决定行动）
-│   ├── config.py            ← 配置管理
-│   ├── user_context.py      ← 多用户管理（目录隔离、注册、令牌）
-│   ├── web_routes.py        ← Web API + 页面路由
-│   ├── prompts.py           ← AI 提示词模板
-│   ├── memory.py            ← 记忆系统
-│   ├── skill_loader.py      ← 技能加载器
-│   ├── storage.py           ← 存储抽象层
-│   ├── local_io.py          ← 本地文件读写
-│   ├── wework_crypto.py     ← 企微消息加解密
-│   ├── requirements.txt     ← Python 依赖清单
-│   ├── .env                 ← 你的环境变量（不会上传 git）
-│   ├── skills/              ← 37 个技能插件
-│   └── web_static/          ← 8 个 Web 前端页面
-│
-├── deploy/                  ← 部署配置
-│   ├── Dockerfile           ← Docker 镜像定义
-│   ├── docker-compose.yml   ← Docker Compose 编排
-│   └── scheduler/           ← 腾讯云 SCF 定时调度器（可选）
-│
-├── tests/                   ← 测试
-│   └── test_isolation.py    ← 数据隔离测试（111 项）
-│
-├── data/                    ← 运行时数据（自动生成，不要手动改）
-│   ├── _karvis_system/      ← 系统数据（用户表、令牌、用量日志）
-│   └── users/               ← 每个用户的独立数据目录
-│       ├── 用户A/
-│       │   ├── 00-Inbox/    ← 速记、待办、状态
-│       │   ├── 01-Daily/    ← 日报、周报、月报
-│       │   ├── 02-Notes/    ← 分类笔记
-│       │   └── _Karvis/     ← 记忆、配置、日志
-│       └── 用户B/
-│           └── ...（结构相同，数据独立）
-│
-└── docs/
-    └── requirements.md      ← 需求文档
-```
-
----
-
-## 常见问题 FAQ
-
-### Q: 发消息后 Karvis 没有回复
-
-**逐步排查**：
-
-1. **看日志**：`docker logs karvis --tail 100` 或 `tail -100 karvis.log`
-2. 搜索 `[handle_message]` — 如果没有，说明企微消息没送到 Karvis
-   - 检查企微后台的 URL 填对了没
-   - 检查服务器防火墙有没有放行 9000 端口
-3. 搜索 `[Brain]` — 如果有，说明消息收到了但处理出错
-   - 检查 `DEEPSEEK_API_KEY` 是否填对
-   - 检查 DeepSeek 余额是否充足
-4. 搜索 `reply_text` — 如果有但企微没收到
-   - 检查「企业可信 IP」有没有配
-
-### Q: 企微后台填 URL 时提示「回调验证失败」
-
-- 确认 Karvis 已经启动（能访问 `http://你的地址:9000/web/login`）
-- 确认 Token 和 EncodingAESKey 与 `.env` 中一致
-- 如果用 cloudflared，确认隧道还在运行
-
-### Q: Web 查看链接打不开
-
-- 如果部署在服务器上，确保 `.env` 中设置了 `WEB_DOMAIN=你的IP:9000`
-- 链接默认 24 小时有效，过期后在企微说「给我查看链接」重新获取
-- 检查服务器防火墙是否放行 9000 端口
-
-### Q: 想换服务器 / 迁移数据怎么办
-
-只需要把 `data/` 目录整个复制到新服务器就行，所有用户数据、记忆、配置都在里面。
-
-```bash
-# 旧服务器
-tar czf karvis-data-backup.tar.gz data/
-
-# 新服务器
-tar xzf karvis-data-backup.tar.gz
-```
-
-### Q: 怎么限制每个人每天发消息的数量
-
-在 `.env` 中设置：
-
-```bash
-DAILY_MESSAGE_LIMIT=30   # 每人每天最多 30 条
-```
-
-超限后 Karvis 会温柔提醒用户「今天的额度用完了」。
-
-### Q: 怎么挂起一个用户（暂停他使用）
-
-1. 打开管理员后台：`http://你的地址:9000/web/admin`
-2. 输入 `ADMIN_TOKEN`
-3. 在用户列表中点击「挂起」
-
-挂起后该用户发消息不会被处理，也不会收到定时推送。
-
-### Q: 怎么增加 Qwen API（可选，能省钱）
-
-Qwen Flash 用于简单任务（记速记、转发笔记等），比 DeepSeek 便宜很多。
-
-1. 去 https://bailian.console.aliyun.com/ 注册
-2. 在 `.env` 中填入：
-
-```bash
-QWEN_API_KEY=sk-你的qwen-key
-```
-
-### Q: 怎么开启语音消息识别
-
-需要腾讯云 ASR 服务：
-
-1. 去 https://console.cloud.tencent.com/asr 开通
-2. 在 `.env` 中填入：
-
-```bash
-TENCENT_APPID=你的AppId
-TENCENT_SECRET_ID=你的SecretId
-TENCENT_SECRET_KEY=你的SecretKey
-```
-
-### Q: Docker 重启后数据还在吗
-
-**在**。docker-compose.yml 配置了数据卷（`karvis_data`），即使容器删除重建，数据也会保留。
-
-除非你手动执行 `docker volume rm`，否则数据不会丢失。
-
-### Q: 更新代码怎么操作
-
-把新版本的代码文件夹替换到服务器上（保留 `data/` 目录和 `src/.env`），然后重启：
-
-```bash
-# Docker 方式
-cd KarvisForAll/deploy
-docker-compose down
-docker-compose up -d --build
-
-# 手动方式
-# 停掉旧进程，重新 python3 app.py
+├── setup.sh                 # 一键安装脚本
+├── .env.example             # 环境变量模板
+├── src/
+│   ├── app.py               # 主入口（Flask 消息网关）
+│   ├── brain.py             # AI 大脑（意图识别 → 技能分发）
+│   ├── config.py            # 配置管理
+│   ├── user_context.py      # 多用户管理
+│   ├── skills/              # 24 个技能插件模块
+│   ├── web_static/          # Web 前端页面
+│   └── requirements.txt     # Python 依赖
+├── deploy/
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── scheduler/           # 定时任务（可选）
+├── data/                    # 运行时数据（自动生成）
+├── docs/                    # 文档
+├── tests/                   # 测试（111 项检查）
+└── scripts/backup.sh        # 备份脚本
 ```
 
 ---
 
 ## 成本估算
 
-以 2-3 个人日常使用为例：
-
 | 项目 | 月费用 |
 |---|---|
-| DeepSeek API | ¥15-50（取决于活跃度） |
-| 服务器（1C1G 轻量云） | ¥30-60 |
-| 其他（Qwen/ASR，可选） | ¥0-20 |
+| DeepSeek API（2-3 人使用） | ¥15-50 |
+| 服务器（腾讯云轻量 1C1G） | ¥30-60 |
+| 其他（Qwen / ASR，可选） | ¥0-20 |
 | **合计** | **¥45-130/月** |
 
-> 管理员可以通过 Web 管理后台实时查看 LLM 用量和费用估算。
-> 通过 `DAILY_MESSAGE_LIMIT` 限制每人消息数，防止费用失控。
+> Token 层面：三层路由策略，日均 30+ 次使用，月 Token 成本不到 ¥1/人。
+
+---
+
+## 常见问题
+
+<details>
+<summary><b>发消息后 Karvis 没有回复</b></summary>
+
+1. **看日志**：`docker logs karvis --tail 100`
+2. 搜 `[handle_message]` — 没有 = 企微消息没到 Karvis
+   - URL 填对了没？Karvis 启动了没？防火墙放行 9000 了没？
+3. 搜 `[Brain]` — 有 = 消息收到了但 AI 处理出错
+   - API Key 对不对？余额够不够？
+4. 搜 `reply_text` — 有 = AI 回了但企微没收到
+   - **企业可信 IP** 配了没？
+
+</details>
+
+<details>
+<summary><b>企微后台填 URL 时提示"回调验证失败"</b></summary>
+
+- Karvis 启动了吗？（`http://你的IP:9000/web/login` 能打开吗）
+- Token 和 EncodingAESKey 是否和 `.env` **完全一致**
+- 用 cloudflared 的话，隧道还在运行吗
+
+</details>
+
+<details>
+<summary><b>Web 查看链接打不开</b></summary>
+
+- 服务器部署：确保 `.env` 中设了 `WEB_DOMAIN=你的IP:9000`
+- 链接有效期 24 小时，过期后在企微说「给我查看链接」
+- 防火墙放行 9000 端口
+
+</details>
+
+<details>
+<summary><b>迁移数据 / 换服务器</b></summary>
+
+把 `data/` 目录整个复制到新服务器就行，所有数据都在里面：
+
+```bash
+tar czf karvis-backup.tar.gz data/    # 旧服务器打包
+tar xzf karvis-backup.tar.gz          # 新服务器解压
+```
+
+</details>
+
+<details>
+<summary><b>怎么更新代码</b></summary>
+
+```bash
+git pull
+cd deploy && docker compose down && docker compose up -d --build
+```
+
+保留 `data/` 和 `src/.env`，其他随便覆盖。
+
+</details>
+
+<details>
+<summary><b>想加 Qwen（省钱）/ 语音识别 / 天气播报</b></summary>
+
+在 `.env` 中填入对应的 API Key 即可，详见 [.env.example](.env.example) 中的注释。
+
+</details>
 
 ---
 
 ## 许可证
 
-MIT License
+[MIT License](LICENSE)
+
+---
+
+<p align="center">
+  <b>Karvis</b> — 不用刻意坐下来记录，在生活的间隙，随手说句话，它帮你沉淀一切。
+</p>

@@ -6,7 +6,6 @@ Skill: daily.generate
 import sys
 import re
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -47,7 +46,7 @@ def execute(params, state, ctx):
 
     # 4. 写入 Daily Note（合并，不覆盖打卡内容）
     file_path = f"{ctx.daily_notes_dir}/{date_str}.md"
-    ok = _write_daily_note(file_path, date_str, daily_md)
+    ok = _write_daily_note(ctx, file_path, date_str, daily_md)
 
     if ok:
         _log(f"[daily.generate] 日报已写入: {file_path}")
@@ -75,11 +74,11 @@ def _collect_today_notes(date_str, ctx):
     # 复用 brain 的全局线程池，避免重复创建
     try:
         from brain import _executor
-        futures = {key: _executor.submit(OneDriveIO.read_text, path) for key, path in files_to_read.items()}
+        futures = {key: _executor.submit(ctx.IO.read_text, path) for key, path in files_to_read.items()}
     except ImportError:
         # fallback: 创建临时线程池
         _pool = ThreadPoolExecutor(max_workers=5)
-        futures = {key: _pool.submit(OneDriveIO.read_text, path) for key, path in files_to_read.items()}
+        futures = {key: _pool.submit(ctx.IO.read_text, path) for key, path in files_to_read.items()}
 
     for key, fut in futures.items():
         try:
@@ -204,9 +203,9 @@ def _build_daily_report(date_str, analysis, notes):
     return "\n".join(lines)
 
 
-def _write_daily_note(file_path, date_str, daily_content):
+def _write_daily_note(ctx, file_path, date_str, daily_content):
     """写入 Daily Note，与打卡内容合并"""
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
     if existing is None:
         existing = ""
 
@@ -234,7 +233,7 @@ def _write_daily_note(file_path, date_str, daily_content):
         else:
             new_content = existing.rstrip() + "\n\n" + daily_content
 
-    return OneDriveIO.write_text(file_path, new_content)
+    return ctx.IO.write_text(file_path, new_content)
 
 
 # Skill 热加载注册表（O-010）

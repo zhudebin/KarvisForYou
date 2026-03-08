@@ -198,18 +198,16 @@ def _build_journal_content(date_str, time_period, asr_text, analysis, attachment
 
 def _write_journal_file(date_str, content, ctx):
     """写入语音日记文件，自动处理序号"""
-    from storage import IO as OneDriveIO
-
     base_dir = ctx.voice_journal_dir
 
     # 检查是否已有当天的语音日记（最多检查 5 个序号）
     for seq in range(1, 6):
         suffix = f"-{seq}" if seq > 1 else ""
         file_path = f"{base_dir}/{date_str}{suffix}.md"
-        existing = OneDriveIO.read_text(file_path)
+        existing = ctx.IO.read_text(file_path)
         if existing is None or existing == "":
             # 文件不存在或为空，写入
-            ok = OneDriveIO.write_text(file_path, content)
+            ok = ctx.IO.write_text(file_path, content)
             if ok:
                 _log(f"[voice_journal] 写入: {file_path}")
                 return file_path

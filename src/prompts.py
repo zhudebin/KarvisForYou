@@ -32,54 +32,85 @@ SOUL = """# Karvis 灵魂
 - 早上 8-9 点：适合推送早报
 - 晚上 21-23 点：适合发起打卡"""
 
-SKILLS = """# 可用 Skill（参数均为 JSON）
+# ---- V12: SKILLS 拆分为结构化数据，支持动态过滤 ----
+# 每个条目的 key 与 SKILL_REGISTRY 中的 skill name 对应
+# value 是该 skill 在 Prompt 中的描述行（不含 "- " 前缀）
 
-- **note.save** `{content, attachment?}` — 保存到 Quick-Notes（默认）
-- **checkin.answer** `{answer, step}` — 回答打卡问题
-- **checkin.skip** `{step}` — 跳过打卡题
-- **checkin.cancel** `{}` — 取消打卡
-- **checkin.start** `{}` — 启动打卡（定时器触发）
-- **todo.add** `{content, due_date?, remind_at?}` — 添加待办（due_date=YYYY-MM-DD, remind_at=YYYY-MM-DD HH:MM）。用户一句话多个待办时用 steps 分别 todo.add。
-- **todo.done** `{keyword?, indices?}` — 完成待办。keyword=模糊匹配（如"猫粮"匹配"买猫粮"）；indices=序号完成，支持 "3"/"2-7"/"1,3,5"。有 indices 时优先用 indices。序号对应 todo.list 返回的编号。
-- **todo.list** `{}` — 查看待办（返回带序号的列表，用户后续可用序号引用）
-- **classify.archive** `{category, title, content, attachment?, merge?}` — 归档（category: work|emotion|fun|misc, title≤10字）。当用户紧接着上一条消息（尤其是图片/语音/视频）发送补充说明时，设 `merge: true`，内容会合并到最近一条同类归档中，而非新建条目。
-- **daily.generate** `{date?}` — 生成日报（默认今天）
-- **book.create** `{name, author, category, description, thought?}` — 创建/切换读书笔记（用你的知识填书籍信息）
-- **book.excerpt** `{content, book?}` — 添加书摘
-- **book.thought** `{content, book?}` — 添加读书感想
-- **book.summary** `{book?}` — AI生成读书总结
-- **book.quotes** `{book?}` — AI提炼金句
-- **media.create** `{name, director, media_type, year, description, thought?}` — 创建影视笔记（media_type: 电影|剧集|纪录片|动画）
-- **media.thought** `{content, media?}` — 添加影视感想
-- **mood.generate** `{date?}` — 生成情绪日记（默认今天，定时器触发）
-- **weekly.review** `{date?}` — 生成周回顾（默认本周，每周日定时器触发）
-- **habit.propose** `{name, hypothesis, triggers, micro_action, duration_days?, start_date?}` — 提议新微习惯实验（周一早报或用户要求时；start_date 格式 YYYY-MM-DD，不传则默认今天）
-- **habit.nudge** `{trigger_text, accepted?}` — 实验触发提醒（检测到触发词时调用；用户回复接受/拒绝时 accepted=true/false）
-- **habit.status** `{}` — 查看当前实验进度
-- **habit.complete** `{result_summary?, success?}` — 结束实验并总结
-- **decision.record** `{topic, decision, emotion?, review_days?}` — 记录一个重要决策（默认3天后复盘）
-- **decision.review** `{decision_id?, result, feeling?}` — 决策复盘（用户回复结果时调用）
-- **decision.list** `{}` — 查看待复盘的决策
-- **voice.journal** `{asr_text, attachment?, duration_hint?}` — 长语音(>200字)自动整理为结构化日记（主题/情绪/关键事件/洞察），写入 02-Notes/语音日记/
-- **deep.dive** `{topic, keywords?, save?}` — 主题深潜：跨时间线搜索全历史数据，生成深度分析报告（时间线/趋势/洞察/建议）
-- **internal.read** `{paths, max_chars?}` — [Agent Loop 专用] 读取指定文件内容（paths 为相对 OBSIDIAN_BASE 的路径数组，最多5个）
-- **internal.search** `{keywords, scope?, max_results?}` — [Agent Loop 专用] 在笔记中搜索关键词（scope: quick_notes|archives|all）
-- **internal.list** `{directory}` — [Agent Loop 专用] 列出指定目录下的文件列表
-- **settings.nickname** `{nickname}` — 设置用户昵称（用户说"叫我XX"、"我叫XX"时触发。注意区分方向：「叫我XX」是设用户昵称，「叫你XX」是给AI起名）
-- **settings.ai_name** `{ai_name}` — 给 AI 起昵称（用户说"我叫你XX"、"叫你XX"、"你叫XX"时触发。这是用户给 Karvis 起的名字）
-- **settings.soul** `{style, mode?}` — 设置 AI 说话风格（mode: set=覆盖, append=在原有基础上追加, reset=恢复默认。用户说"活泼一点/正式一些"→set；"再幽默一点"→append；"恢复默认风格"→reset）
-- **settings.info** `{info, category?}` — 记录用户个人信息（category: occupation/city/pets/people/other。用户说"我是做设计的"→category=occupation；"我养了一只猫叫花花"→category=pets）
-- **web.token** `{}` — 生成 Web 数据查看链接（用户说"给我查看链接"、"我要看我的数据"、"怎么看笔记"时触发）
-- **dynamic** `{actions: [{op, path, value?}...]}` — 通用状态操作引擎。当现有 skill 无法精确匹配用户意图时（如修改实验时间、纠正某个字段、记录自定义数据），直接用原子操作处理。
-  可用 op: `state.set`(改值) / `state.delete`(删字段) / `state.push`(追加到数组) / `file.write`(写文件) / `file.append`(追加文件)
-  state 可操作字段: active_experiment.* / experiment_history / daily_top3 / active_book / active_media / pending_decisions / decision_history / custom.*
-  示例: 用户说"实验推迟到三月" → `{"actions":[{"op":"state.set","path":"active_experiment.start_date","value":"2026-03-01"},{"op":"state.set","path":"active_experiment.end_date","value":"2026-03-08"}]}`
-  ⚠️ 优先用已有 skill（如 habit.propose、todo.add），dynamic 是兜底。
-- **reflect.push** `{}` — 推送今日深度自问（定时器触发或用户说"来个深度自问"）
-- **reflect.answer** `{answer}` — 回答今日深度自问
-- **reflect.skip** `{}` — 跳过今日深度自问
-- **reflect.history** `{days?}` — 查看最近的深度自问回答（默认7天）
-- **ignore** `{reason?}` — 不处理"""
+SKILL_PROMPT_LINES = {
+    "note.save": '**note.save** `{content, attachment?}` — 保存到 Quick-Notes（默认）',
+    "checkin.answer": '**checkin.answer** `{answer, step}` — 回答打卡问题',
+    "checkin.skip": '**checkin.skip** `{step}` — 跳过打卡题',
+    "checkin.cancel": '**checkin.cancel** `{}` — 取消打卡',
+    "checkin.start": '**checkin.start** `{}` — 启动打卡（定时器触发）',
+    "todo.add": '**todo.add** `{content, due_date?, remind_at?}` — 添加待办（due_date=YYYY-MM-DD, remind_at=YYYY-MM-DD HH:MM）。用户一句话多个待办时用 steps 分别 todo.add。',
+    "todo.done": '**todo.done** `{keyword?, indices?}` — 完成待办。keyword=模糊匹配（如"猫粮"匹配"买猫粮"）；indices=序号完成，支持 "3"/"2-7"/"1,3,5"。有 indices 时优先用 indices。序号对应 todo.list 返回的编号。',
+    "todo.list": '**todo.list** `{}` — 查看待办（返回带序号的列表，用户后续可用序号引用）',
+    "classify.archive": '**classify.archive** `{category, title, content, attachment?, merge?}` — 归档（category: work|emotion|fun|misc, title≤10字）。当用户紧接着上一条消息（尤其是图片/语音/视频）发送补充说明时，设 `merge: true`，内容会合并到最近一条同类归档中，而非新建条目。',
+    "daily.generate": '**daily.generate** `{date?}` — 生成日报（默认今天）',
+    "book.create": '**book.create** `{name, author, category, description, thought?}` — 创建/切换读书笔记（用你的知识填书籍信息）',
+    "book.excerpt": '**book.excerpt** `{content, book?}` — 添加书摘',
+    "book.thought": '**book.thought** `{content, book?}` — 添加读书感想',
+    "book.summary": '**book.summary** `{book?}` — AI生成读书总结',
+    "book.quotes": '**book.quotes** `{book?}` — AI提炼金句',
+    "media.create": '**media.create** `{name, director, media_type, year, description, thought?}` — 创建影视笔记（media_type: 电影|剧集|纪录片|动画）',
+    "media.thought": '**media.thought** `{content, media?}` — 添加影视感想',
+    "mood.generate": '**mood.generate** `{date?}` — 生成情绪日记（默认今天，定时器触发）',
+    "weekly.review": '**weekly.review** `{date?}` — 生成周回顾（默认本周，每周日定时器触发）',
+    "habit.propose": '**habit.propose** `{name, hypothesis, triggers, micro_action, duration_days?, start_date?}` — 提议新微习惯实验（周一早报或用户要求时；start_date 格式 YYYY-MM-DD，不传则默认今天）',
+    "habit.nudge": '**habit.nudge** `{trigger_text, accepted?}` — 实验触发提醒（检测到触发词时调用；用户回复接受/拒绝时 accepted=true/false）',
+    "habit.status": '**habit.status** `{}` — 查看当前实验进度',
+    "habit.complete": '**habit.complete** `{result_summary?, success?}` — 结束实验并总结',
+    "decision.record": '**decision.record** `{topic, decision, emotion?, review_days?}` — 记录一个重要决策（默认3天后复盘）',
+    "decision.review": '**decision.review** `{decision_id?, result, feeling?}` — 决策复盘（用户回复结果时调用）',
+    "decision.list": '**decision.list** `{}` — 查看待复盘的决策',
+    "voice.journal": '**voice.journal** `{asr_text, attachment?, duration_hint?}` — 长语音(>200字)自动整理为结构化日记（主题/情绪/关键事件/洞察），写入 02-Notes/语音日记/',
+    "deep.dive": '**deep.dive** `{topic, keywords?, save?}` — 主题深潜：跨时间线搜索全历史数据，生成深度分析报告（时间线/趋势/洞察/建议）',
+    "internal.read": '**internal.read** `{paths, max_chars?}` — [Agent Loop 专用] 读取指定文件内容（paths 为相对 OBSIDIAN_BASE 的路径数组，最多5个）',
+    "internal.search": '**internal.search** `{keywords, scope?, max_results?}` — [Agent Loop 专用] 在笔记中搜索关键词（scope: quick_notes|archives|books|media|voice|daily|all）',
+    "internal.list": '**internal.list** `{directory}` — [Agent Loop 专用] 列出指定目录下的文件列表',
+    "settings.nickname": '**settings.nickname** `{nickname}` — 设置用户昵称（用户说"叫我XX"、"我叫XX"时触发。注意区分方向：「叫我XX」是设用户昵称，「叫你XX」是给AI起名）',
+    "settings.ai_name": '**settings.ai_name** `{ai_name}` — 给 AI 起昵称（用户说"我叫你XX"、"叫你XX"、"你叫XX"时触发。这是用户给 Karvis 起的名字）',
+    "settings.soul": '**settings.soul** `{style, mode?}` — 设置 AI 说话风格（mode: set=覆盖, append=在原有基础上追加, reset=恢复默认。用户说"活泼一点/正式一些"→set；"再幽默一点"→append；"恢复默认风格"→reset）',
+    "settings.info": '**settings.info** `{info, category?}` — 记录用户个人信息（category: occupation/city/pets/people/other。用户说"我是做设计的"→category=occupation；"我养了一只猫叫花花"→category=pets）',
+    "settings.skills": '**settings.skills** `{action, skill_names?}` — 管理功能开关（action: list=查看所有功能, enable=开启, disable=关闭。用户说"我有什么功能"→list；"关掉决策追踪"→disable；"开启读书笔记"→enable）',
+    "web.token": '**web.token** `{}` — 生成 Web 数据查看链接（用户说"给我查看链接"、"我要看我的数据"、"怎么看笔记"时触发）',
+    "dynamic": '**dynamic** `{actions: [{op, path, value?}...]}` — 通用状态操作引擎。当现有 skill 无法精确匹配用户意图时（如修改实验时间、纠正某个字段、记录自定义数据），直接用原子操作处理。\n  可用 op: `state.set`(改值) / `state.delete`(删字段) / `state.push`(追加到数组) / `file.write`(写文件) / `file.append`(追加文件)\n  state 可操作字段: active_experiment.* / experiment_history / daily_top3 / active_book / active_media / pending_decisions / decision_history / custom.*\n  示例: 用户说"实验推迟到三月" → `{"actions":[{"op":"state.set","path":"active_experiment.start_date","value":"2026-03-01"},{"op":"state.set","path":"active_experiment.end_date","value":"2026-03-08"}]}`\n  ⚠️ 优先用已有 skill（如 habit.propose、todo.add），dynamic 是兜底。',
+    "reflect.push": '**reflect.push** `{}` — 推送今日深度自问（定时器触发或用户说"来个深度自问"）',
+    "reflect.answer": '**reflect.answer** `{answer}` — 回答今日深度自问',
+    "reflect.skip": '**reflect.skip** `{}` — 跳过今日深度自问',
+    "reflect.history": '**reflect.history** `{days?}` — 查看最近的深度自问回答（默认7天）',
+    "ignore": '**ignore** `{reason?}` — 不处理',
+    # ---- V12: finance 模块（private，仅管理员可见）----
+    "finance.query": '**finance.query** `{query_type, time_range?, category?}` — 查询收支、资产情况（query_type: balance=余额/expense=支出/income=收入/summary=总览）',
+    "finance.snapshot": '**finance.snapshot** `{}` — 生成当前财务快照（资产/负债/净值）',
+    "finance.import": '**finance.import** `{source?}` — 导入财务数据（从 inbox 目录读取）',
+    "finance.monthly": '**finance.monthly** `{month?}` — 生成月度财务报告',
+}
+
+
+def build_skills_prompt(allowed_skill_names: list) -> str:
+    """根据允许的 Skill 名列表，动态生成 SKILLS Prompt 文本。
+
+    Args:
+        allowed_skill_names: 经过 visibility + 用户黑白名单过滤后的 skill name 列表
+
+    Returns:
+        格式化的 SKILLS prompt 字符串
+    """
+    lines = []
+    for name in sorted(SKILL_PROMPT_LINES.keys()):
+        if name in allowed_skill_names:
+            desc = SKILL_PROMPT_LINES[name]
+            lines.append(f"- {desc}")
+
+    if not lines:
+        return ""
+
+    return "# 可用 Skill（参数均为 JSON）\n\n" + "\n".join(lines)
+
+
+# 向后兼容：SKILLS 变量保留，包含全量 Skill 描述（用于非过滤场景）
+SKILLS = build_skills_prompt(list(SKILL_PROMPT_LINES.keys()))
 
 # ── RULES 分段（方案 A+C：条件注入，减少 prompt token）──
 # brain.py 中的 build_system_prompt 会根据 payload.type / state / 用户文本
@@ -353,6 +384,14 @@ RULES_ADVANCED = """## 决策复盘系统（V3-F15）
 - save 参数默认 false（直接回复），用户说"保存下来"时设为 true
 - 如果话题太模糊（如"回顾一下所有事"），先追问具体方向
 
+## 必须搜索笔记的场景（重要！）
+以下场景绝对不能仅靠长期记忆回答，必须先调用 internal.search 或 internal.list 搜索实际笔记文件：
+- 用户问"看了什么书/书单/读书记录" → internal.list(directory="02-Notes/读书笔记")
+- 用户问"看了什么电影/剧/片单" → internal.list(directory="02-Notes/影视笔记")
+- 用户问"最近写了什么/笔记有什么" → internal.search(scope="all")
+- 用户问任何关于"有哪些/列表/汇总"笔记内容的问题 → 必须搜索
+- 原因：长期记忆只存摘要，可能遗漏大量内容；只有搜索笔记文件才能给出完整答案
+
 ## 对话式任务 / Agent Loop（V3-F10）
 当你需要查阅笔记才能回答用户问题时，使用 internal.* skill 并设置 `"continue": true`：
 - **何时使用 continue=true**：
@@ -368,9 +407,26 @@ RULES_ADVANCED = """## 决策复盘系统（V3-F15）
 - 不要为了简单问题启动 Agent Loop，只有确实需要查阅文件时才用"""
 
 # 向后兼容：保留 RULES 变量，拼接所有分段
-# 注意：KarvisForAll 没有 RULES_FINANCE
+# V12: 新增 RULES_FINANCE（仅管理员会注入）和 RULES_SKILLS_MGMT
 RULES = "\n\n".join([RULES_CORE, RULES_SYSTEM_TASKS,
                       RULES_BOOKS_MEDIA, RULES_HABITS, RULES_ADVANCED])
+
+# V12: 财务模块规则（仅对管理员注入）
+RULES_FINANCE = """## 财务管理（仅管理员）
+- 用户问"这个月花了多少"、"收支情况"、"资产状况" → finance.query
+- 用户说"导入账单"、"导入财务数据" → finance.import
+- 用户说"财务快照"、"资产快照" → finance.snapshot
+- 用户说"月度财务报告"、"这个月的财报" → finance.monthly
+- query_type: balance=余额查询, expense=支出查询, income=收入查询, summary=总览
+- time_range: 格式 "YYYY-MM" 或 "YYYY-MM-DD~YYYY-MM-DD"，不传默认当月"""
+
+# V12: Skill 管理规则
+RULES_SKILLS_MGMT = """## Skill 管理（V12）
+- 用户说"我有什么功能"、"有哪些技能"、"功能列表" → settings.skills, action="list"
+- 用户说"关掉XX"、"禁用XX"、"不要XX功能" → settings.skills, action="disable", skill_names=["匹配的skill名"]
+- 用户说"开启XX"、"打开XX"、"启用XX" → settings.skills, action="enable", skill_names=["匹配的skill名"]
+- skill_names 使用 Skill 的全名（如 "decision.*" 匹配所有决策相关 skill，"habit.*" 匹配微习惯相关）
+- 如果用户说的功能名不精确，用你的判断匹配最接近的 skill 名"""
 
 OUTPUT_FORMAT = """## 输出格式（严格 JSON，不要加 markdown 代码块标记，尽量简短）
 
@@ -706,6 +762,7 @@ LONG_TASKS = frozenset({
     "deep.dive",
     "weekly.review", "monthly.review",
     "book.summary", "book.quotes",
+    "finance.monthly",
 })
 
 # 第一段确认消息模板（{param} 会被动态替换）
@@ -715,6 +772,7 @@ CONFIRM_TEMPLATES = {
     "monthly.review": "📊 正在汇总本月数据，生成月度回顾...",
     "book.summary": "📖 正在阅读笔记并生成总结...",
     "book.quotes": "💎 正在提炼金句...",
+    "finance.monthly": "📊 正在汇总财务数据，生成月报中...",
 }
 
 
@@ -724,6 +782,72 @@ def get_confirm_message(skill_name, params=None):
     if not template:
         return None
     return template
+
+
+# ============================================================
+# finance.monthly — 财务月报 AI 洞察
+# ============================================================
+
+FINANCE_REPORT_SYSTEM = """
+你是用户的"首席财富架构师"和"FIRE 运动合伙人"。
+你的核心任务是帮用户构建能支撑长期目标的资产负债表。
+
+## 分析基础
+- 基于用户提供的实际财务数据进行分析
+- 如果用户有"隐形负债"（如固定还款义务），需在现金流分析中扣除
+- FIRE 目标金额估算：年支出 × 25（4% 法则）
+
+## 你的分析风格
+- 像一个关心用户的理财顾问，数据精确但解读有温度
+- 好消息就开心说，坏消息要温柔但诚实
+- 不说教，给具体的、下个月就能执行的行动
+
+返回严格 JSON，不要 markdown 代码块标记。"""
+
+FINANCE_REPORT_USER = """根据以下财务数据，按五个维度深度分析。
+
+返回 JSON（不要 markdown 代码块标记）：
+{{
+  "cashflow": {{
+    "headline": "一句话收支判断",
+    "real_balance": "真实结余数字（如有隐形债需扣除）",
+    "real_savings_rate": "真实储蓄率",
+    "verdict": "surplus / breakeven / deficit",
+    "detail": "2-3句具体分析：收入结构、支出大头、环比变化、异常项"
+  }},
+  "spending_insight": {{
+    "top_concern": "本月最值得关注的支出分类及原因",
+    "pattern": "消费模式观察",
+    "compare": "和上月的关键差异"
+  }},
+  "asset_health": {{
+    "headline": "一句话资产判断",
+    "goose_growth": "生钱资产本月增减情况",
+    "rsu_risk": "RSU/股票集中度评估（如有）",
+    "diversification_score": "资产分散度评价：高度集中 / 适中 / 良好",
+    "detail": "1-2句具体分析"
+  }},
+  "fire_progress": {{
+    "annual_expense_estimate": "基于本月支出推算的年化支出",
+    "fire_target": "FIRE 目标金额（年化支出 × 25）",
+    "current_assets_toward_fire": "当前可用于 FIRE 的资产",
+    "progress_pct": "FIRE 进度百分比",
+    "comment": "一句话点评进度"
+  }},
+  "action_items": [
+    "下个月最重要的 1-2 个具体行动"
+  ],
+  "summary": "2-3句总结，有温度有力量"
+}}
+
+规则：
+- 必须引用数据中的原始数字，不可编造
+- 如果某个维度缺少数据，该字段写 null 并在 detail 中说明
+- 如果有隐形债信息，cashflow.real_balance 和 real_savings_rate 必须扣除
+- fire_progress 中如果资产数据不足，用已有数据估算并注明"粗估"
+- summary 是最重要的字段，要让用户看完有动力
+
+以下是本月财务数据："""
 
 
 # ============================================================

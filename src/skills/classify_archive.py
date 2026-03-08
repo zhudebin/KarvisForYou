@@ -12,7 +12,6 @@ Skill: classify.archive
 """
 import sys
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -65,7 +64,7 @@ def execute(params, state, ctx):
         last = state.get("last_archive")
         if last and last.get("category") == category:
             file_path = last.get("file_path", f"{cat_info['dir']}/{date_str}.md")
-            ok = _merge_to_last_entry(file_path, content, attachment, time_str)
+            ok = _merge_to_last_entry(ctx, file_path, content, attachment, time_str)
             if ok:
                 if title:
                     last["title"] = title
@@ -87,11 +86,11 @@ def execute(params, state, ctx):
     entry = "\n".join(entry_parts)
 
     if category == "misc":
-        ok = _append_to_misc(ctx.misc_file, entry, time_str, content)
+        ok = _append_to_misc(ctx, ctx.misc_file, entry, time_str, content)
         file_path = None
     else:
         file_path = f"{cat_info['dir']}/{date_str}.md"
-        ok = _append_to_dated_file(file_path, date_str, entry, cat_info)
+        ok = _append_to_dated_file(ctx, file_path, date_str, entry, cat_info)
 
     if ok:
         _log(f"[classify.archive] 已归档到 {cat_info['label']}: {(title or content)[:40]}")
@@ -124,12 +123,12 @@ def _format_attachment(attachment):
         return f"📎 [[{relative}]]"
 
 
-def _merge_to_last_entry(file_path, content, attachment, time_str):
+def _merge_to_last_entry(ctx, file_path, content, attachment, time_str):
     """
     将补充内容合并到归档文件的最后一个条目中。
     找到最后一个 `*— 时间*` 行，在它前面插入补充内容。
     """
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
     if not existing or not existing.strip():
         return False
 
@@ -166,12 +165,12 @@ def _merge_to_last_entry(file_path, content, attachment, time_str):
     lines[insert_idx + 1] = f"*— {time_str} (补充)*"
 
     new_content = "\n".join(lines)
-    return OneDriveIO.write_text(file_path, new_content)
+    return ctx.IO.write_text(file_path, new_content)
 
 
-def _append_to_misc(misc_file, entry, time_str, content):
+def _append_to_misc(ctx, misc_file, entry, time_str, content):
     """追加到碎碎念.md"""
-    existing = OneDriveIO.read_text(misc_file)
+    existing = ctx.IO.read_text(misc_file)
     if existing is None:
         return False
 
@@ -182,12 +181,12 @@ def _append_to_misc(misc_file, entry, time_str, content):
     new_section = f"\n## {time_str}\n\n{content}\n\n---\n"
     new_content = existing.rstrip() + "\n" + new_section
 
-    return OneDriveIO.write_text(misc_file, new_content)
+    return ctx.IO.write_text(misc_file, new_content)
 
 
-def _append_to_dated_file(file_path, date_str, entry, cat_info):
+def _append_to_dated_file(ctx, file_path, date_str, entry, cat_info):
     """追加到按日期命名的归档文件"""
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
     if existing is None:
         return False
 
@@ -196,7 +195,7 @@ def _append_to_dated_file(file_path, date_str, entry, cat_info):
         existing = f"# {cat_info['emoji']} {cat_info['label']} — {date_str}\n\n---\n"
 
     new_content = existing.rstrip() + "\n\n" + entry
-    return OneDriveIO.write_text(file_path, new_content)
+    return ctx.IO.write_text(file_path, new_content)
 
 
 # Skill 热加载注册表（O-010）

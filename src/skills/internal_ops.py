@@ -31,7 +31,6 @@ def read_files(params, state, ctx):
         paths: list[str] — 要读取的文件路径列表（相对于 OBSIDIAN_BASE）
         max_chars: int — 每个文件最大返回字符数（默认 1000）
     """
-    from storage import IO as OneDriveIO
     from concurrent.futures import ThreadPoolExecutor
 
     paths = params.get("paths", [])
@@ -40,16 +39,17 @@ def read_files(params, state, ctx):
     if not paths:
         return {"success": False, "reply": "没有指定要读取的文件路径"}
 
-    # 安全检查：只允许读取用户 base_dir 下的文件
+    # 安全检查：只允许读取用户 content_base 下的文件
+    content_base = getattr(ctx, "content_base", ctx.base_dir)
     full_paths = []
     for p in paths[:5]:  # 最多 5 个文件
         if p.startswith("/"):
-            if not p.startswith(ctx.base_dir):
+            if not p.startswith(content_base):
                 _log(f"[internal_ops] 安全拒绝: {p}")
                 continue
             full_paths.append(p)
         else:
-            full_paths.append(f"{ctx.base_dir}/{p}")
+            full_paths.append(f"{content_base}/{p}")
 
     if not full_paths:
         return {"success": False, "reply": "没有合法的文件路径"}
@@ -61,7 +61,7 @@ def read_files(params, state, ctx):
     except Exception:
         executor = ThreadPoolExecutor(max_workers=4)
 
-    futures = {p: executor.submit(OneDriveIO.read_text, p) for p in full_paths}
+    futures = {p: executor.submit(ctx.IO.read_text, p) for p in full_paths}
 
     results = {}
     for p, fut in futures.items():
@@ -90,10 +90,9 @@ def search_files(params, state, ctx):
 
     params:
         keywords: list[str] — 搜索关键词
-        scope: str — 搜索范围："quick_notes" | "archives" | "all"（默认 all）
+        scope: str — 搜索范围："quick_notes" | "archives" | "books" | "media" | "voice" | "daily" | "all"（默认 all）
         max_results: int — 最大返回条数（默认 10）
     """
-    from storage import IO as OneDriveIO
     from concurrent.futures import ThreadPoolExecutor
 
     keywords = params.get("keywords", [])
@@ -124,7 +123,38 @@ def search_files(params, state, ctx):
             files_to_read[f"work_{d}"] = f"{ctx.work_notes_dir}/{d}.md"
             files_to_read[f"fun_{d}"] = f"{ctx.fun_notes_dir}/{d}.md"
 
-    futures = {k: executor.submit(OneDriveIO.read_text, v) for k, v in files_to_read.items()}
+    # ---------- 动态遍历目录型笔记 ----------
+    def _collect_md(directory, prefix):
+        try:
+            children = ctx.IO.list_children(directory)
+            if children:
+                import fnmatch as _fn
+                for c in children:
+                    nm = c.get("name", "")
+                    if "file" in c and _fn.fnmatch(nm, "*.md"):
+                        files_to_read[f"{prefix}_{nm}"] = f"{directory}/{nm}"
+        except Exception as e:
+            _log(f"[internal_ops] {prefix} dir list fail: {e}")
+
+    if scope in ("books", "all"):
+        _collect_md(ctx.book_notes_dir, "book")
+    if scope in ("media", "all"):
+        _collect_md(ctx.media_notes_dir, "media")
+    if scope in ("voice", "all"):
+        _collect_md(ctx.voice_journal_dir, "voice")
+    if scope in ("daily", "all"):
+        _collect_md(ctx.daily_notes_dir, "daily")
+    if scope in ("emotion_all", "all"):
+        _collect_md(ctx.emotion_notes_dir, "emotion_all")
+    if scope in ("work_all", "all"):
+        _collect_md(ctx.work_notes_dir, "work_all")
+    if scope in ("fun_all", "all"):
+        _collect_md(ctx.fun_notes_dir, "fun_all")
+    if scope == "all":
+        files_to_read["todo"] = ctx.todo_file
+        files_to_read["memory"] = ctx.memory_file
+
+    futures = {k: executor.submit(ctx.IO.read_text, v) for k, v in files_to_read.items()}
     results_text = {}
     for k, fut in futures.items():
         try:
@@ -168,26 +198,26 @@ def list_files(params, state, ctx):
     params:
         directory: str — 目录路径（相对于 OBSIDIAN_BASE）
     """
-    from storage import IO as OneDriveIO
-
     directory = params.get("directory", "")
     if not directory:
         return {"success": False, "reply": "没有指定目录路径"}
 
+    content_base = getattr(ctx, "content_base", ctx.base_dir)
     if directory.startswith("/"):
-        if not directory.startswith(ctx.base_dir):
+        if not (directory.startswith(content_base) or directory.startswith(ctx.base_dir)):
             return {"success": False, "reply": "不允许访问该目录"}
         full_path = directory
     else:
-        full_path = f"{ctx.base_dir}/{directory}"
+        full_path = f"{content_base}/{directory}"
 
-    # 本地文件列表
-    import os
+    # 通过 ctx.IO 列出文件（兼容 OneDrive）
     try:
-        items = os.listdir(full_path)
+        children = ctx.IO.list_children(full_path)
+        if children is None:
+            return {"success": False, "reply": f"目录不存在或无法访问: {full_path}"}
         file_list = [
-            {"name": item, "type": "folder" if os.path.isdir(os.path.join(full_path, item)) else "file"}
-            for item in sorted(items)[:30]  # 最多 30 个
+            {"name": c["name"], "type": "folder" if "folder" in c else "file"}
+            for c in sorted(children, key=lambda x: x.get("name", ""))[:30]
         ]
         return {
             "success": True,

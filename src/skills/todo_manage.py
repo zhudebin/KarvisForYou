@@ -7,7 +7,6 @@ Skill: todo.*
 import sys
 import re
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -103,7 +102,7 @@ def add(params, state, ctx):
     remind_at = (params.get("remind_at") or "").strip()
 
     # 读取现有文件
-    text = OneDriveIO.read_text(ctx.todo_file)
+    text = ctx.IO.read_text(ctx.todo_file)
     if text is None:
         return {"success": False, "reply": "读取 Todo.md 失败"}
 
@@ -135,7 +134,7 @@ def add(params, state, ctx):
 
     # 写回文件
     new_text = _rebuild_todo_md(doing, done)
-    ok = OneDriveIO.write_text(ctx.todo_file, new_text)
+    ok = ctx.IO.write_text(ctx.todo_file, new_text)
 
     if ok:
         _log(f"[todo.add] 已添加: {content}")
@@ -161,7 +160,7 @@ def complete(params, state, ctx):
     if not keyword and not indices_str:
         return {"success": False, "reply": "请告诉我要完成哪个待办"}
 
-    text = OneDriveIO.read_text(ctx.todo_file)
+    text = ctx.IO.read_text(ctx.todo_file)
     if text is None:
         return {"success": False, "reply": "读取 Todo.md 失败"}
 
@@ -188,7 +187,7 @@ def complete(params, state, ctx):
 
         state_updates = _clean_reminders(state, completed)
         new_text = _rebuild_todo_md(doing, done)
-        ok = OneDriveIO.write_text(ctx.todo_file, new_text)
+        ok = ctx.IO.write_text(ctx.todo_file, new_text)
 
         if ok:
             names = "、".join(f"「{c[:20]}」" for c in completed)
@@ -220,7 +219,7 @@ def complete(params, state, ctx):
 
         state_updates = _clean_reminders(state, [matched["content"]])
         new_text = _rebuild_todo_md(doing, done)
-        ok = OneDriveIO.write_text(ctx.todo_file, new_text)
+        ok = ctx.IO.write_text(ctx.todo_file, new_text)
 
         if ok:
             _log(f"[todo.done] 已完成: {matched['content']}")
@@ -291,7 +290,7 @@ def list_todos(params, state, ctx):
     """
     查看待办清单（带序号，用户可用序号引用）。
     """
-    text = OneDriveIO.read_text(ctx.todo_file)
+    text = ctx.IO.read_text(ctx.todo_file)
     if text is None:
         return {"success": False, "reply": "读取 Todo.md 失败"}
 
@@ -314,7 +313,7 @@ def list_todos(params, state, ctx):
     return {"success": True, "reply": "\n".join(parts)}
 
 
-def check_reminders(state, todo_file=None):
+def check_reminders(state, ctx=None, todo_file=None):
     """
     检查到期提醒，返回需要推送的消息列表。
     由 /system?action=todo_remind 直接调用，不经过 LLM。
@@ -335,9 +334,9 @@ def check_reminders(state, todo_file=None):
     # 只有 "进行中" 区域下且未打勾 ([ ]) 的才视为仍在进行
     # 打勾 ([x]) 但未移到"已完成"区域的 = Obsidian 手动完成
     cross_validated = False
-    if todo_file:
+    if todo_file and ctx:
         try:
-            text = OneDriveIO.read_text(todo_file)
+            text = ctx.IO.read_text(todo_file)
             if text:
                 doing, _ = _parse_todo_md(text)
                 # 只保留未打勾的 doing items

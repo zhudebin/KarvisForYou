@@ -5,7 +5,7 @@ Skill: media.*
 """
 import sys
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
+
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -50,9 +50,9 @@ def create(params, state, ctx):
 
     file_path = _media_file(name, ctx)
 
-    existing = OneDriveIO.read_text(file_path)
+    existing = ctx.IO.read_text(file_path)
     if existing is None:
-        return {"success": False, "reply": "OneDrive 读取失败"}
+        return {"success": False, "reply": "读取失败"}
 
     if not existing.strip():
         template = f"""---
@@ -96,7 +96,7 @@ tags: [影视, {media_type}]
                 f"## 💭 我的感想\n\n{first_thought}\n*— {_now_str()}*\n\n---"
             )
 
-        ok = OneDriveIO.write_text(file_path, template)
+        ok = ctx.IO.write_text(file_path, template)
         if not ok:
             return {"success": False, "reply": "创建笔记失败"}
 
@@ -134,7 +134,7 @@ def thought(params, state, ctx):
         return {"success": False, "reply": "还没有在看的影视，先说一下名称吧"}
 
     entry = f"{content}\n*— {_now_str()}*\n"
-    ok = OneDriveIO.append_to_section(_media_file(media, ctx), "## 💭 我的感想", entry)
+    ok = ctx.IO.append_to_section(_media_file(media, ctx), "## 💭 我的感想", entry)
 
     if ok:
         _log(f"[media.thought] 添加到 {media}")
@@ -145,14 +145,14 @@ def thought(params, state, ctx):
 
 def _update_media_list(name, director, media_type, year, ctx):
     """更新片单索引"""
-    existing = OneDriveIO.read_text(_media_list_file(ctx)) or ""
+    existing = ctx.IO.read_text(_media_list_file(ctx)) or ""
     if not existing.strip():
         existing = "# 🎬 片单\n\n| 名称 | 导演 | 类型 | 年份 | 状态 | 日期 |\n|------|------|------|------|------|------|\n"
 
     date = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
     new_row = f"| [[{name}]] | {director} | {media_type} | {year} | 👀 在看 | {date} |"
     new_content = existing.rstrip() + "\n" + new_row + "\n"
-    OneDriveIO.write_text(_media_list_file(ctx), new_content)
+    ctx.IO.write_text(_media_list_file(ctx), new_content)
 
 
 # Skill 热加载注册表（O-010）

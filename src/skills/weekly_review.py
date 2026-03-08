@@ -15,7 +15,7 @@ Skill: weekly.review
 import sys
 import json
 from datetime import datetime, timezone, timedelta
-from storage import IO as OneDriveIO
+
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
@@ -70,7 +70,7 @@ def execute(params, state, ctx):
 
     # 4. 写入文件
     file_path = f"{ctx.daily_notes_dir}/周报-{start_date.strftime('%Y-%m-%d')}.md"
-    ok = _write_weekly_review(file_path, review_md)
+    ok = _write_weekly_review(ctx, file_path, review_md)
 
     if ok:
         _log(f"[weekly.review] 周报已写入: {file_path}")
@@ -108,7 +108,7 @@ def _collect_week_data(dates, state, ctx):
     except ImportError:
         executor = ThreadPoolExecutor(max_workers=6)
 
-    futures = {k: executor.submit(OneDriveIO.read_text, v) for k, v in files_to_read.items()}
+    futures = {k: executor.submit(ctx.IO.read_text, v) for k, v in files_to_read.items()}
 
     for k, fut in futures.items():
         try:
@@ -402,9 +402,9 @@ def _cat_label(key):
     return labels.get(key, key)
 
 
-def _write_weekly_review(file_path, content):
+def _write_weekly_review(ctx, file_path, content):
     """写入周报文件（覆盖式，每周只生成一份）"""
-    return OneDriveIO.write_text(file_path, content)
+    return ctx.IO.write_text(file_path, content)
 
 
 # Skill 热加载注册表

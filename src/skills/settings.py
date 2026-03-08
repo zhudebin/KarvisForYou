@@ -156,6 +156,176 @@ def set_info(params, state, ctx):
         ]
     }
 
+def manage_skills(params, state, ctx):
+    """
+    V12: 对话式 Skill 管理。
+    action: list / enable / disable
+    skill_names: 要操作的 skill 名列表（enable/disable 时需要）
+    """
+    action = params.get("action", "list")
+
+    if action == "list":
+        return _list_skills(ctx)
+    elif action == "disable":
+        return _toggle_skills(ctx, params.get("skill_names", []), disable=True)
+    elif action == "enable":
+        return _toggle_skills(ctx, params.get("skill_names", []), disable=False)
+    else:
+        return {"success": False, "reply": "我不太理解你要做什么，试试说「我有什么功能」？"}
+
+
+def _list_skills(ctx):
+    """列出用户的所有可见 Skill，分三组：已开启 / 未开启 / 敬请期待"""
+    from skill_loader import load_skill_registry, get_skill_metadata
+
+    load_skill_registry()
+    metadata = get_skill_metadata()
+
+    enabled = []
+    disabled = []
+    preview = []
+
+    # Skill 名到友好名的映射（按前缀分组）
+    _DISPLAY_NAMES = {
+        "note": "📝 笔记",
+        "todo": "✅ 待办",
+        "checkin": "📊 打卡",
+        "classify": "📂 分类归档",
+        "daily": "📅 日报",
+        "book": "📖 读书笔记",
+        "media": "🎬 影视笔记",
+        "mood": "😊 情绪日记",
+        "weekly": "📅 周回顾",
+        "monthly": "📊 月度回顾",
+        "habit": "🔬 微习惯",
+        "decision": "🎯 决策追踪",
+        "deep": "🔍 主题深潜",
+        "reflect": "💭 深度自问",
+        "voice": "🎙️ 语音日记",
+        "settings": "⚙️ 设置",
+        "web": "🔗 数据查看",
+        "dynamic": "🔧 动态操作",
+        "internal": "📁 文件查阅",
+    }
+    _seen_prefixes = set()
+
+    for name, meta in sorted(metadata.items()):
+        vis = meta.get("visibility", "public")
+
+        # private → 完全不显示
+        if vis == "private" and not ctx.is_admin:
+            continue
+
+        # preview → 显示"敬请期待"
+        if vis == "preview" and not ctx.is_admin:
+            prefix = name.split(".")[0]
+            if prefix not in _seen_prefixes:
+                _seen_prefixes.add(prefix)
+                display = _DISPLAY_NAMES.get(prefix, prefix)
+                preview.append(display)
+            continue
+
+        # public / admin 可见的 private
+        prefix = name.split(".")[0]
+        if prefix in _seen_prefixes:
+            continue
+        _seen_prefixes.add(prefix)
+
+        display = _DISPLAY_NAMES.get(prefix, prefix)
+        if ctx.is_skill_allowed(name):
+            enabled.append(display)
+        else:
+            disabled.append(display)
+
+    # 组装回复
+    lines = []
+    if enabled:
+        lines.append("你目前开启了以下功能：\n")
+        lines.append("\n".join(f"  {s}" for s in enabled))
+
+    if disabled:
+        lines.append("\n\n未开启：")
+        lines.append("\n".join(f"  {s}" for s in disabled))
+
+    if preview:
+        lines.append("\n\n即将上线：")
+        lines.append("\n".join(f"  {s} — 敬请期待~" for s in preview))
+
+    lines.append("\n\n想开启或关闭某个功能，直接告诉我就好~")
+
+    return {
+        "success": True,
+        "reply": "\n".join(lines),
+    }
+
+
+def _toggle_skills(ctx, skill_names, disable=True):
+    """开启或关闭指定 Skill"""
+    if not skill_names:
+        action_word = "关闭" if disable else "开启"
+        return {"success": False, "reply": f"没听清你要{action_word}哪个功能，再说一次？"}
+
+    # 检查 visibility — private 不透露存在，preview 提示敬请期待
+    from skill_loader import load_skill_registry, get_skill_metadata
+    load_skill_registry()
+    metadata = get_skill_metadata()
+
+    for name in skill_names:
+        # 查找精确匹配或通配符匹配的第一个 skill
+        matched_meta = metadata.get(name, {})
+        if not matched_meta:
+            # 尝试 prefix 匹配
+            for k, v in metadata.items():
+                if k.startswith(name.rstrip("*").rstrip(".")):
+                    matched_meta = v
+                    break
+        vis = matched_meta.get("visibility", "public")
+        if vis == "private" and not ctx.is_admin:
+            return {"success": False, "reply": "我目前没有这个功能哦~ 如果你想管理待办或记笔记，随时告诉我~"}
+        if vis == "preview" and not ctx.is_admin:
+            return {"success": False, "reply": "该功能即将在订阅版上线，敬请期待~ 目前你可以用文字描述给我，我一样能帮到你~"}
+
+    config = ctx.get_user_config()
+    skills_cfg = config.get("skills", {"mode": "blacklist", "list": []})
+    mode = skills_cfg.get("mode", "blacklist")
+    skill_list = skills_cfg.get("list", [])
+
+    action_word = "关闭" if disable else "开启"
+    changed = []
+
+    for name in skill_names:
+        if mode == "blacklist":
+            if disable:
+                if name not in skill_list:
+                    skill_list.append(name)
+                    changed.append(name)
+            else:  # enable → remove from blacklist
+                if name in skill_list:
+                    skill_list.remove(name)
+                    changed.append(name)
+        else:  # whitelist
+            if disable:
+                if name in skill_list:
+                    skill_list.remove(name)
+                    changed.append(name)
+            else:  # enable → add to whitelist
+                if name not in skill_list:
+                    skill_list.append(name)
+                    changed.append(name)
+
+    skills_cfg["list"] = skill_list
+    config["skills"] = skills_cfg
+    ctx.save_user_config(config)
+
+    # 更新内存缓存
+    ctx._skills_config = skills_cfg
+
+    if changed:
+        friendly = "、".join(f"「{n.split('.')[0]}」" for n in changed)
+        return {"success": True, "reply": f"好的，已{action_word}{friendly}~ 需要的时候随时跟我说~"}
+    else:
+        return {"success": True, "reply": f"这些功能已经是{action_word}状态啦~"}
+
 
 # ============ Skill 注册 ============
 
@@ -164,4 +334,5 @@ SKILL_REGISTRY = {
     "settings.ai_name": set_ai_name,
     "settings.soul": set_soul,
     "settings.info": set_info,
+    "settings.skills": manage_skills,
 }

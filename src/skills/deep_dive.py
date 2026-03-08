@@ -72,8 +72,6 @@ def dive(params, state, ctx):
 
 def _collect_data(keywords, state, ctx):
     """搜索全历史数据，返回结构化结果"""
-    from storage import IO as OneDriveIO
-
     # 获取线程池
     try:
         from brain import _executor
@@ -100,7 +98,7 @@ def _collect_data(keywords, state, ctx):
     files_to_read["memory"] = ctx.memory_file
 
     # 并发读取
-    futures = {k: executor.submit(OneDriveIO.read_text, v) for k, v in files_to_read.items()}
+    futures = {k: executor.submit(ctx.IO.read_text, v) for k, v in files_to_read.items()}
 
     results = {}
     for k, fut in futures.items():
@@ -283,8 +281,6 @@ def _generate_report(topic, keywords, raw_data, state):
 
 def _save_report(topic, report, ctx):
     """将报告保存到文件"""
-    from storage import IO as OneDriveIO
-
     now = datetime.now(BEIJING_TZ)
     date_str = now.strftime("%Y-%m-%d")
     # 简化 topic 为文件名
@@ -301,7 +297,7 @@ tags: [deep-dive]
 {report}
 """
     try:
-        ok = OneDriveIO.write_text(file_path, content)
+        ok = ctx.IO.write_text(file_path, content)
         if ok:
             _log(f"[deep_dive] 报告已保存: {file_path}")
         else:

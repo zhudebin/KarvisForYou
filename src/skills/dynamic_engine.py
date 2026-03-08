@@ -158,13 +158,12 @@ def _op_file_read(state, action, ctx=None):
         return {"ok": False, "error": f"无权读取 '{path}'"}
 
     try:
-        from storage import IO
         # 多用户：拼接用户数据根目录
         full_path = path
         if ctx and hasattr(ctx, 'obsidian_base'):
             import os
             full_path = os.path.join(ctx.obsidian_base, path)
-        content = IO.read_text(full_path)
+        content = ctx.IO.read_text(full_path) if ctx else None
         if content is None:
             return {"ok": False, "error": f"读取失败: {path}"}
         # 截断防止过长
@@ -184,12 +183,11 @@ def _op_file_write(state, action, ctx=None):
         return {"ok": False, "error": f"无权写入 '{path}'"}
 
     try:
-        from storage import IO
         full_path = path
         if ctx and hasattr(ctx, 'obsidian_base'):
             import os
             full_path = os.path.join(ctx.obsidian_base, path)
-        ok = IO.write_text(full_path, content)
+        ok = ctx.IO.write_text(full_path, content) if ctx else False
         return {"ok": ok}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -204,14 +202,15 @@ def _op_file_append(state, action, ctx=None):
         return {"ok": False, "error": f"无权写入 '{path}'"}
 
     try:
-        from storage import IO
         full_path = path
         if ctx and hasattr(ctx, 'obsidian_base'):
             import os
             full_path = os.path.join(ctx.obsidian_base, path)
-        existing = IO.read_text(full_path) or ""
+        if not ctx:
+            return {"ok": False, "error": "缺少用户上下文"}
+        existing = ctx.IO.read_text(full_path) or ""
         new_content = existing + content
-        ok = IO.write_text(full_path, new_content)
+        ok = ctx.IO.write_text(full_path, new_content)
         return {"ok": ok}
     except Exception as e:
         return {"ok": False, "error": str(e)}

@@ -22,6 +22,7 @@ import hashlib
 import base64
 import requests
 import threading
+import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -44,10 +45,10 @@ from user_context import (
 # 异步处理端点的公网 URL（SCF 部署后填入，用于企微 5 秒超时的异步转发）
 PROCESS_ENDPOINT_URL = os.environ.get("PROCESS_ENDPOINT_URL", "http://127.0.0.1:9000/process")
 from wework_crypto import WXBizMsgCrypt
-from storage import IO as OneDriveIO  # 统一存储接口（OneDrive 或 Lite 本地模式）
 import brain
 
 app = Flask(__name__)
+_start_time = time.time()  # 记录启动时间，用于 /health uptime
 
 # 过滤 Web 页面/API 读请求的 HTTP 访问日志，只保留业务日志和错误
 import logging
@@ -63,8 +64,18 @@ class _QuietWebFilter(logging.Filter):
         # 过滤 auth verify（前端每次页面加载都会调）
         if '"POST /api/auth/verify' in msg:
             return False
+        # 过滤外部扫描探测（SSH probes, security.txt, robots.txt 等）
+        if any(x in msg for x in ['SSH-2.0', 'security.txt', 'robots.txt',
+                                    '.well-known', 'MGLNDD', 'boaform',
+                                    'SCRIPT_FILENAME', 'mstshash']):
+            return False
+        # 过滤 bad request（非 HTTP 的网络扫描包）
+        if 'code 400' in msg or 'code 505' in msg:
+            return False
         return True
 logging.getLogger('werkzeug').addFilter(_QuietWebFilter())
+# 降低 werkzeug 日志级别，去掉 WARNING 横幅
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 # 注册 Web 路由 Blueprint
 from web_routes import web_bp, api_bp
@@ -72,8 +83,31 @@ app.register_blueprint(web_bp, url_prefix="/web")
 app.register_blueprint(api_bp, url_prefix="/api")
 
 
+# ============ Request ID 线程本地存储 ============
+_request_local = threading.local()
+
+
+def _get_request_id():
+    """获取当前线程的 Request ID"""
+    return getattr(_request_local, "request_id", None)
+
+
+def _set_request_id(rid=None):
+    """设置当前线程的 Request ID，不传则自动生成短 ID"""
+    _request_local.request_id = rid or uuid.uuid4().hex[:8]
+    return _request_local.request_id
+
+
+_BEIJING_TZ = timezone(timedelta(hours=8))
+
+
 def _log(msg):
-    print(msg, file=sys.stderr, flush=True)
+    ts = datetime.now(_BEIJING_TZ).strftime("%H:%M:%S")
+    rid = _get_request_id()
+    if rid:
+        print(f"{ts} [{rid}] {msg}", file=sys.stderr, flush=True)
+    else:
+        print(f"{ts} {msg}", file=sys.stderr, flush=True)
 
 
 # ============ 企微 access_token 缓存 ============
@@ -117,7 +151,8 @@ def send_wework_message(user_id, content):
     return ok
 
 
-# ============ 消息去重 ============
+# ============ 消息去重（带大小限制） ============
+_MSG_CACHE_MAX_SIZE = 2000
 _processed_msg_cache = {}
 
 
@@ -129,6 +164,12 @@ def is_duplicate_msg(msg_id):
     expired = [k for k, v in _processed_msg_cache.items() if v < now]
     for k in expired:
         del _processed_msg_cache[k]
+    # 防止内存泄漏：超过上限时清除最早的一批
+    if len(_processed_msg_cache) >= _MSG_CACHE_MAX_SIZE:
+        oldest = sorted(_processed_msg_cache.items(), key=lambda x: x[1])[:_MSG_CACHE_MAX_SIZE // 4]
+        for k, _ in oldest:
+            del _processed_msg_cache[k]
+        _log(f"[去重] 缓存超限，清理 {len(oldest)} 条旧记录")
     if msg_id in _processed_msg_cache:
         _log(f"[去重] 跳过: {msg_id}")
         return True
@@ -167,7 +208,7 @@ def upload_attachment(data, msg_type, ext, ctx, content_type="application/octet-
     """上传附件到用户 attachments 目录，返回完整路径或 None"""
     filename = generate_attachment_name(msg_type, ext)
     file_path = f"{ctx.attachments_path}/{filename}"
-    ok = OneDriveIO.upload_binary(file_path, data, content_type)
+    ok = ctx.IO.upload_binary(file_path, data, content_type)
     return file_path if ok else None
 
 
@@ -512,6 +553,15 @@ def handle_message(msg, user_id):
                 "（直接说「叫我XX」就好~）"
             )
             send_wework_message(user_id, welcome)
+            # 通知管理员有新用户注册
+            from config import ADMIN_USER_ID
+            if ADMIN_USER_ID and user_id != ADMIN_USER_ID:
+                try:
+                    total = len(get_all_active_users())
+                    send_wework_message(ADMIN_USER_ID,
+                        f"📢 新用户注册\n\nuser_id: {user_id}\n当前活跃用户数: {total}")
+                except Exception as e:
+                    _log(f"[handle_message] 新用户通知管理员失败: {e}")
             return
 
         # ============ 新用户引导流程（onboarding） ============
@@ -693,7 +743,6 @@ def wework():
     if request.method == 'POST':
         try:
             xml_data = request.data.decode('utf-8')
-            _log("[企微] 收到 POST")
 
             msg_signature = request.args.get('msg_signature', '')
             timestamp = request.args.get('timestamp', '')
@@ -761,6 +810,7 @@ def wework():
 def process_endpoint():
     """内部异步处理端点：接收消息并调用 brain 处理"""
     try:
+        rid = _set_request_id()
         data = request.get_json(force=True)
         msg = data.get("msg", {})
         user_id = data.get("user_id", "")
@@ -779,6 +829,7 @@ def process_endpoint():
 def system_endpoint():
     """系统端点：定时器/手动触发的 system action（支持多用户遍历）"""
     try:
+        rid = _set_request_id()
         data = request.get_json(force=True)
         action = data.get("action", "")
         target_user = data.get("user_id", "")
@@ -789,7 +840,8 @@ def system_endpoint():
             from user_context import cleanup_expired_tokens
             invalidate_all_caches()
             removed = cleanup_expired_tokens()
-            _log(f"[/system] 缓存已全部清除, 清理过期令牌 {removed} 个")
+            if removed > 0:
+                _log(f"[/system] refresh_cache: 清理过期令牌 {removed} 个")
             return json.dumps({"ok": True, "action": "refresh_cache", "tokens_cleaned": removed})
 
         # V8: 智能调度引擎（daily_init / scheduler_tick 遍历所有用户）
@@ -852,7 +904,7 @@ def _run_system_action_for_user(action, data, uid, ctx):
     if action == "todo_remind":
         from skills.todo_manage import check_reminders
         state = read_state_cached(ctx) or {}
-        result = check_reminders(state, todo_file=ctx.todo_file)
+        result = check_reminders(state, ctx=ctx, todo_file=ctx.todo_file)
         messages = result.get("messages", [])
         state_updates = result.get("state_updates", {})
         _log(f"[system_action] todo_remind: {len(messages)} 条提醒, {len(state_updates)} 个状态更新")
@@ -868,10 +920,10 @@ def _run_system_action_for_user(action, data, uid, ctx):
     if action in ("morning_report", "evening_checkin", "daily_report"):
         context = {}
         try:
-            todo_content = OneDriveIO.read_text(ctx.todo_file)
+            todo_content = ctx.IO.read_text(ctx.todo_file)
             if todo_content:
                 context["todo"] = todo_content[:2000]
-            quick_notes = OneDriveIO.read_text(ctx.quick_notes_file)
+            quick_notes = ctx.IO.read_text(ctx.quick_notes_file)
             if quick_notes:
                 context["quick_notes"] = quick_notes[:1000]
         except Exception as e:
@@ -1022,8 +1074,85 @@ def _run_system_action_for_user(action, data, uid, ctx):
 
 @app.route('/', methods=['GET'])
 def health():
-    """健康检查"""
+    """健康检查（基础 — 用于负载均衡探活）"""
     return "Karvis is alive"
+
+
+@app.route('/health', methods=['GET'])
+def health_detail():
+    """深度健康检查 — 返回各依赖组件状态"""
+    import shutil
+    checks = {}
+    overall = True
+
+    # 1. DeepSeek API Key 是否配置
+    from config import DEEPSEEK_API_KEY, QWEN_API_KEY
+    checks["deepseek_key"] = bool(DEEPSEEK_API_KEY)
+    checks["qwen_key"] = bool(QWEN_API_KEY)
+    if not DEEPSEEK_API_KEY:
+        overall = False
+
+    # 2. 企微 token 是否可获取
+    try:
+        token = get_wework_access_token()
+        checks["wework_token"] = bool(token)
+        if not token:
+            overall = False
+    except Exception:
+        checks["wework_token"] = False
+        overall = False
+
+    # 3. 磁盘空间（/root 分区）
+    try:
+        usage = shutil.disk_usage("/root")
+        free_gb = usage.free / (1024 ** 3)
+        checks["disk_free_gb"] = round(free_gb, 1)
+        if free_gb < 1:
+            overall = False
+            checks["disk_warning"] = "磁盘空间不足 1GB"
+    except Exception:
+        checks["disk_free_gb"] = -1
+
+    # 4. Scheduler 是否在运行
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        # 简单检查：看有没有注册的 jobs
+        checks["scheduler"] = True  # 如果启动时未报错就认为 OK
+    except ImportError:
+        checks["scheduler"] = False
+
+    # 5. 活跃用户数
+    try:
+        active_count = len(get_all_active_users())
+        checks["active_users"] = active_count
+    except Exception:
+        checks["active_users"] = -1
+
+    # 6. 日志文件大小
+    try:
+        from config import LOG_FILE_KARVISFORALL
+        if os.path.exists(LOG_FILE_KARVISFORALL):
+            log_size_mb = os.path.getsize(LOG_FILE_KARVISFORALL) / (1024 * 1024)
+            checks["log_size_mb"] = round(log_size_mb, 1)
+            if log_size_mb > 100:
+                checks["log_warning"] = "日志文件超过 100MB"
+        else:
+            checks["log_size_mb"] = 0
+    except Exception:
+        checks["log_size_mb"] = -1
+
+    # 7. 消息去重缓存大小
+    checks["msg_cache_size"] = len(_processed_msg_cache)
+
+    # 8. 启动时间
+    checks["uptime_s"] = int(time.time() - _start_time)
+
+    status_code = 200 if overall else 503
+    return json.dumps({
+        "status": "healthy" if overall else "degraded",
+        "checks": checks,
+        "timestamp": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+    }, ensure_ascii=False), status_code, {"Content-Type": "application/json"}
 
 
 # ============ 时间胶囊辅助函数 ============
@@ -1061,7 +1190,7 @@ def _build_time_capsule(ctx):
     except ImportError:
         executor = ThreadPoolExecutor(max_workers=4)
 
-    futures = {k: executor.submit(OneDriveIO.read_text, v[1]) for k, v in files_to_read.items()}
+    futures = {k: executor.submit(ctx.IO.read_text, v[1]) for k, v in files_to_read.items()}
 
     for k, fut in futures.items():
         try:
@@ -1335,9 +1464,9 @@ def _build_companion_context(state, ctx):
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {
-            "memory": executor.submit(OneDriveIO.read_text, ctx.memory_file),
-            "quick_notes": executor.submit(OneDriveIO.read_text, ctx.quick_notes_file),
-            "todo": executor.submit(OneDriveIO.read_text, ctx.todo_file),
+            "memory": executor.submit(ctx.IO.read_text, ctx.memory_file),
+            "quick_notes": executor.submit(ctx.IO.read_text, ctx.quick_notes_file),
+            "todo": executor.submit(ctx.IO.read_text, ctx.todo_file),
         }
         for key, future in futures.items():
             try:
@@ -1427,7 +1556,7 @@ def _generate_companion_message(signals, context, state):
 def _check_pending_todos(ctx):
     """F2: 从 Todo.md 读取未完成待办"""
     try:
-        todo_content = OneDriveIO.read_text(ctx.todo_file)
+        todo_content = ctx.IO.read_text(ctx.todo_file)
         if not todo_content:
             return []
         pending = []
@@ -1581,7 +1710,7 @@ def _daily_init(uid, ctx):
     """V8: 每日初始化（多用户版）— 生成当天意图队列 + 重置计数器"""
     from memory import write_state_and_update_cache
     # 绕过缓存直接读文件，防止缓存中旧的 _init_date 导致重复初始化
-    state = OneDriveIO.read_json(ctx.state_file) or {}
+    state = ctx.IO.read_json(ctx.state_file) or {}
     sched = state.setdefault("scheduler", {})
     now = datetime.now(BEIJING_TZ)
     today_str = now.strftime("%Y-%m-%d")
@@ -1629,7 +1758,7 @@ def _scheduler_tick(uid, ctx):
     """V8: 每 30 分钟心跳（多用户版）— 检查到期意图并执行"""
     from memory import write_state_and_update_cache
     # 绕过缓存读最新 state，防止缓存中旧的意图状态导致重复执行
-    state = OneDriveIO.read_json(ctx.state_file) or {}
+    state = ctx.IO.read_json(ctx.state_file) or {}
     sched = state.setdefault("scheduler", {})
     now = datetime.now(BEIJING_TZ)
     now_str = now.strftime("%H:%M")
@@ -1640,7 +1769,7 @@ def _scheduler_tick(uid, ctx):
         _log(f"[V8][{uid}] tick 检测到未初始化，触发 daily_init")
         _daily_init(uid, ctx)
         # 重新读取（daily_init 已写入文件）
-        state = OneDriveIO.read_json(ctx.state_file) or {}
+        state = ctx.IO.read_json(ctx.state_file) or {}
         sched = state.get("scheduler", {})
 
     intents = sched.get("intents", [])
@@ -1703,7 +1832,7 @@ def _scheduler_tick(uid, ctx):
 
     # 重新读取最新 state，避免覆盖子 action（如 todo_remind）的 state 更新
     if executed > 0:
-        fresh_state = OneDriveIO.read_json(ctx.state_file) or {}
+        fresh_state = ctx.IO.read_json(ctx.state_file) or {}
         fresh_sched = fresh_state.setdefault("scheduler", {})
         fresh_sched["intents"] = sched["intents"]
         fresh_sched["_push_count_today"] = sched["_push_count_today"]
@@ -1881,7 +2010,8 @@ def _setup_builtin_scheduler():
         try:
             url = f"http://127.0.0.1:{SERVER_PORT}/system"
             resp = requests.post(url, json={"action": action}, timeout=600)
-            _log(f"[Scheduler] {action} -> {resp.status_code}")
+            if resp.status_code != 200:
+                _log(f"[Scheduler] {action} 异常: HTTP {resp.status_code}")
         except Exception as e:
             _log(f"[Scheduler] {action} 失败: {e}")
 

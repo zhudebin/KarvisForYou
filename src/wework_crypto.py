@@ -73,7 +73,6 @@ class WXBizMsgCrypt:
             return None
         try:
             msg = self._decrypt(encrypted_msg)
-            _log(f"[解密] 成功，长度: {len(msg)}")
             return msg
         except Exception as e:
             _log(f"[解密] 失败: {e}")

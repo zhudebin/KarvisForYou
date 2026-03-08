@@ -4,6 +4,7 @@ Karvis 大脑
 核心中枢：Prompt 组装 → 多模型路由 → JSON 解析 → Skill 分发 → 记忆更新
 """
 import json
+import os
 import sys
 import time as _time
 import threading
@@ -24,7 +25,6 @@ from config import (
     ADMIN_USER_ID, ALERT_SLOW_THRESHOLD, ALERT_SLOW_CONSECUTIVE,
     ALERT_COOLDOWN_SECONDS,
 )
-from storage import IO as OneDriveIO  # 统一存储接口
 from memory import (
     load_memory,
     format_recent_messages, add_message_to_state, apply_memory_updates,
@@ -35,8 +35,19 @@ import prompts
 # 复用线程池，减少线程创建开销
 _executor = ThreadPoolExecutor(max_workers=6)
 
+_BEIJING_TZ = timezone(timedelta(hours=8))
+
 def _log(msg):
-    print(msg, file=sys.stderr, flush=True)
+    ts = datetime.now(_BEIJING_TZ).strftime("%H:%M:%S")
+    try:
+        from app import _get_request_id
+        rid = _get_request_id()
+        if rid:
+            print(f"{ts} [{rid}] {msg}", file=sys.stderr, flush=True)
+            return
+    except ImportError:
+        pass
+    print(f"{ts} {msg}", file=sys.stderr, flush=True)
 
 
 # ============ 管理员告警推送 ============
@@ -77,7 +88,7 @@ def _send_admin_alert(alert_type, message):
 def _check_and_alert(elapsed, user_id, skill, user_text, error=None):
     """
     请求完成后检查是否需要告警。
-    支持：慢请求（连续N次 > 阈值）、Traceback/异常。
+    支持：慢请求（连续N次 > 阈值）、Traceback/异常、月度预算超限。
     """
     # 1. 慢请求检测
     if elapsed > ALERT_SLOW_THRESHOLD:
@@ -100,6 +111,58 @@ def _check_and_alert(elapsed, user_id, skill, user_text, error=None):
             f"错误: {str(error)[:200]}\n"
             f"输入: {(user_text or '')[:50]}")
 
+    # 3. 月度预算检查（每 50 次调用检查一次，避免频繁 IO）
+    _alert_state["_call_count"] = _alert_state.get("_call_count", 0) + 1
+    if _alert_state["_call_count"] % 50 == 0:
+        _check_monthly_budget()
+
+
+# 月度预算上限（元），可通过环境变量覆写
+_MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "50"))
+
+
+def _check_monthly_budget():
+    """检查当月 API 成本是否超过预算的 80%，超过则推企微告警"""
+    try:
+        from user_context import USAGE_LOG_FILE
+        import os as _os
+
+        if not _os.path.exists(USAGE_LOG_FILE):
+            return
+
+        now = datetime.now(timezone(timedelta(hours=8)))
+        month_str = now.strftime("%Y-%m")
+        month_cost = 0.0
+
+        with open(USAGE_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                    if e.get("ts", "")[:7] != month_str:
+                        continue
+                    m = e.get("model", "").lower()
+                    pt = e.get("prompt_tokens", 0)
+                    ct = e.get("completion_tokens", 0)
+                    if "deepseek" in m:
+                        month_cost += pt / 1e6 * 2 + ct / 1e6 * 8
+                    elif "vl" in m:
+                        month_cost += pt / 1e6 * 3 + ct / 1e6 * 9
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+        pct = month_cost / _MONTHLY_BUDGET * 100 if _MONTHLY_BUDGET > 0 else 0
+        if pct >= 80:
+            _send_admin_alert("budget_warning",
+                f"💰 月度预算预警\n\n"
+                f"当月已用: ¥{month_cost:.2f} / ¥{_MONTHLY_BUDGET:.0f}\n"
+                f"使用率: {pct:.0f}%\n"
+                f"月份: {month_str}")
+    except Exception as e:
+        _log(f"[Alert] 预算检查异常: {e}")
+
 
 # ============ LLM 用量日志 ============
 
@@ -113,10 +176,9 @@ def _set_current_user(user_id):
 
 
 def _log_llm_usage(model_tier, model_name, usage_dict, latency_s):
-    """记录一次 LLM 调用的用量到 usage_log.jsonl"""
+    """记录一次 LLM 调用的用量到 usage_log.jsonl，支持自动轮转"""
     try:
         from user_context import USAGE_LOG_FILE, SYSTEM_DIR
-        import os
 
         user_id = getattr(_thread_local, "user_id", "unknown")
         now = datetime.now(timezone(timedelta(hours=8)))
@@ -133,10 +195,51 @@ def _log_llm_usage(model_tier, model_name, usage_dict, latency_s):
         }
 
         os.makedirs(os.path.dirname(USAGE_LOG_FILE), exist_ok=True)
+
+        # 自动轮转：文件超过 10MB 时归档
+        _rotate_jsonl(USAGE_LOG_FILE, max_size_mb=10)
+
         with open(USAGE_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         _log(f"[UsageLog] 记录失败: {e}")
+
+
+_JSONL_ROTATE_MAX_MB = 10  # JSONL 文件轮转阈值
+
+
+def _rotate_jsonl(filepath, max_size_mb=None):
+    """JSONL 文件轮转：超过阈值时重命名为 .bak 并压缩"""
+    if max_size_mb is None:
+        max_size_mb = _JSONL_ROTATE_MAX_MB
+    try:
+        if not os.path.exists(filepath):
+            return
+        size_mb = os.path.getsize(filepath) / (1024 * 1024)
+        if size_mb < max_size_mb:
+            return
+
+        now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d_%H%M%S")
+        bak_path = f"{filepath}.{now_str}.bak"
+        os.rename(filepath, bak_path)
+        _log(f"[Rotate] {filepath} ({size_mb:.1f}MB) → {bak_path}")
+
+        # 异步压缩 bak 文件（不阻塞主线程）
+        def _compress():
+            import gzip
+            import shutil
+            try:
+                with open(bak_path, 'rb') as f_in:
+                    with gzip.open(f"{bak_path}.gz", 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                os.remove(bak_path)
+                _log(f"[Rotate] 压缩完成: {bak_path}.gz")
+            except Exception as e:
+                _log(f"[Rotate] 压缩失败: {e}")
+
+        _executor.submit(_compress)
+    except Exception as e:
+        _log(f"[Rotate] 轮转失败: {e}")
 
 
 # ============ Skill 注册表 ============
@@ -391,12 +494,12 @@ def _build_time_string(now_bj):
 
     return " | ".join(parts)
 
-def _select_rules(state, payload=None):
+def _select_rules(state, payload=None, ctx=None):
     """根据 payload.type / state / 用户文本，选择需要注入的 RULES 分段。
 
     方案 C: system 类型请求只注入 RULES_SYSTEM_TASKS（不含 SKILLS 和用户交互 RULES）
     方案 A: 用户消息根据 state 和关键词动态注入分段，RULES_CORE 始终注入
-    注意：KarvisForAll 没有 RULES_FINANCE
+    V12: 管理员额外注入 RULES_FINANCE，所有用户注入 RULES_SKILLS_MGMT
     """
     # 方案 C: 定时任务走精简 prompt
     if payload and payload.get("type") == "system":
@@ -426,6 +529,19 @@ def _select_rules(state, payload=None):
     is_voice = payload.get("type") == "voice" if payload else False
     if is_voice or any(kw in user_text for kw in _ADV_KW):
         segments.append(prompts.RULES_ADVANCED)
+
+    # V12: 财务规则 — 仅管理员且包含财务关键词时注入
+    if ctx and ctx.is_admin:
+        _FINANCE_KW = ("花了多少", "收支", "资产", "财务", "账单", "导入", "净值",
+                       "财报", "月度报告", "快照")
+        if any(kw in user_text for kw in _FINANCE_KW):
+            segments.append(prompts.RULES_FINANCE)
+
+    # V12: Skill 管理规则 — 关键词触发
+    _SKILLS_KW = ("功能", "技能", "skill", "开启", "关闭", "禁用", "启用",
+                  "关掉", "打开")
+    if any(kw in user_text for kw in _SKILLS_KW):
+        segments.append(prompts.RULES_SKILLS_MGMT)
 
     return segments
 
@@ -461,13 +577,18 @@ def build_system_prompt(state, ctx, prompt_futs=None, payload=None):
     if ai_name:
         soul += f"\n- 用户给你起了昵称「{ai_name}」，在合适的时候可以用这个名字自称"
 
-    # 方案 C+A: 条件注入 RULES
+    # 方案 C+A: 条件注入 RULES（V12: 传入 ctx 用于 admin 判断）
     is_system = payload and payload.get("type") == "system"
-    rules_segments = _select_rules(state, payload)
+    rules_segments = _select_rules(state, payload, ctx=ctx)
     rules_text = "\n\n".join(rules_segments)
 
-    # 方案 C: system 类型不注入 SKILLS
-    skills_block = "" if is_system else prompts.SKILLS
+    # V12: system 类型不注入 SKILLS；其他场景根据用户权限动态生成
+    if is_system:
+        skills_block = ""
+    else:
+        from skill_loader import get_skills_for_prompt
+        allowed_names = get_skills_for_prompt(ctx)
+        skills_block = prompts.build_skills_prompt(allowed_names)
 
     parts = [soul,
              f"\n## 长期记忆\n{mem}",
@@ -583,11 +704,11 @@ def process(payload, send_fn=None, ctx=None):
     user_id = payload.get("user_id", "unknown")
     _set_current_user(user_id)
 
-    # 0. 预热 OneDrive token + Graph API 连接（串行，一举两得）
-    #    预热读取会建立到 graph.microsoft.com 的 TLS 连接，后续请求复用
-    OneDriveIO.get_token()
+    # 0. 预热存储连接（OneDrive 模式需要预热 token + TLS 连接）
+    if ctx and hasattr(ctx.IO, 'get_token'):
+        ctx.IO.get_token()
     t_token = _time.time()
-    _log(f"[Brain][耗时] token预热: {t_token - t_start:.1f}s")
+    _log(f"[Brain][耗时] 存储预热: {t_token - t_start:.1f}s")
 
     # 1. 读取 state 和 memory（并发，按用户隔离）
     state_future = _executor.submit(read_state_cached, ctx)
@@ -596,17 +717,25 @@ def process(payload, send_fn=None, ctx=None):
     }
 
     # 2. 先提取 user_text（不依赖 state 和 prompt，CPU 操作）
-    #    图片消息：如果带有 base64 数据，先调 VL 模型获取描述
+    #    图片消息：管理员调 VL 模型获取描述；非管理员返回"敬请期待"
     if payload.get("type") == "image" and payload.get("image_base64"):
-        _log("[Brain] 检测到图片，调用千问 VL 进行图像理解...")
-        vl_desc = _call_qwen_vl(payload["image_base64"])
-        if vl_desc:
-            payload["image_description"] = vl_desc
-            _log(f"[Brain] 图像理解完成: {vl_desc[:100]}")
+        if ctx and ctx.is_admin:
+            _log("[Brain] 检测到图片（管理员），调用千问 VL 进行图像理解...")
+            vl_desc = _call_qwen_vl(payload["image_base64"])
+            if vl_desc:
+                payload["image_description"] = vl_desc
+                _log(f"[Brain] 图像理解完成: {vl_desc[:100]}")
+            else:
+                _log("[Brain] 图像理解失败，降级为普通图片处理")
         else:
-            _log("[Brain] 图像理解失败，降级为普通图片处理")
+            _log(f"[Brain] 非管理员图片消息，跳过 VL 调用, user={user_id}")
         # 释放 base64 数据，节省内存
         del payload["image_base64"]
+        # V12: 非管理员图片 — 记录附件到 Quick-Notes，回复"敬请期待"，跳过 LLM 调用
+        if not (ctx and ctx.is_admin):
+            state = state_future.result() or {}
+            _save_to_quick_notes(payload, state, ctx)
+            return {"reply": "图片已保存~ 图片理解功能即将在订阅版上线，敬请期待~"}
 
     user_text = _extract_user_text(payload)
 
@@ -819,38 +948,46 @@ def _write_memory(memory_updates, ctx):
 
 
 def _write_decision_log(payload, decision, reply, elapsed, ctx):
-    """将每次决策写入 JSONL 日志（追加模式）"""
+    """将每次决策写入 JSONL 日志（追加模式）
+    V12 隐私保护：不记录用户输入原文、thinking 原文、回复原文。
+    只保留技术性字段供运维排障。
+    """
     try:
         beijing_tz = timezone(timedelta(hours=8))
         now_str = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S")
 
         input_type = payload.get("type", "") if payload else ""
-        input_text = ""
-        if input_type == "text":
-            input_text = payload.get("text", "")[:100]
-        elif input_type == "voice":
-            input_text = payload.get("text", "")[:100]
-        elif input_type == "system":
-            input_text = payload.get("action", "")
+        # system action 记录 action 名称（非用户隐私）
+        action = payload.get("action", "") if input_type == "system" else ""
 
         entry = {
             "ts": now_str,
             "user_id": ctx.user_id if ctx else "",
             "input_type": input_type,
-            "input": input_text,
-            "thinking": decision.get("thinking", "")[:100] if decision else "",
+            "action": action,
             "skill": decision.get("skill", "") if decision else "",
-            "reply": (reply or "")[:100],
             "has_memory_updates": bool(decision.get("memory_updates")) if decision else False,
+            "has_reply": bool(reply),
             "elapsed_s": round(elapsed, 1) if elapsed else None,
         }
+        # 注入 Request ID（如果有）
+        try:
+            from app import _get_request_id
+            rid = _get_request_id()
+            if rid:
+                entry["request_id"] = rid
+        except ImportError:
+            pass
         line = json.dumps(entry, ensure_ascii=False)
 
         log_file = ctx.decision_log_file if ctx else ""
-        if log_file:
-            existing = OneDriveIO.read_text(log_file) or ""
+        if log_file and ctx:
+            # 本地存储才做轮转检查（OneDrive 不支持 rename）
+            if ctx.storage_mode == "local":
+                _rotate_jsonl(log_file, max_size_mb=5)
+            existing = ctx.IO.read_text(log_file) or ""
             new_content = existing + line + "\n"
-            OneDriveIO.write_text(log_file, new_content)
+            ctx.IO.write_text(log_file, new_content)
         _log(f"[Brain] 决策日志已写入: skill={entry['skill']}")
     except Exception as e:
         _log(f"[Brain] 决策日志写入失败（不影响主流程）: {e}")
@@ -987,8 +1124,9 @@ def _get_primary_skill(decision):
 
 def _execute_steps(decision, state, registry, ctx):
     """
-    V4: 执行 steps 数组中的所有 skill，收集结果。
+    V4+V12: 执行 steps 数组中的所有 skill，收集结果。
     兼容旧格式（单 skill + params）。
+    V12: 执行前检查 Skill 权限（visibility + 用户黑白名单）。
     """
     steps = decision.get("steps")
     if not steps:
@@ -996,11 +1134,14 @@ def _execute_steps(decision, state, registry, ctx):
         params = decision.get("params", {})
         steps = [{"skill": skill, "params": params}]
 
+    # V12: 加载 Skill 元数据用于 visibility 检查
+    from skill_loader import get_skill_metadata
+    all_metadata = get_skill_metadata()
+
     results = []
     for i, step in enumerate(steps):
         skill_name = step.get("skill", "ignore")
         params = step.get("params", {})
-        handler = registry.get(skill_name)
 
         if skill_name == "note.save":
             _log(f"[Brain] Step {i}: note.save 已由统一写入处理，跳过")
@@ -1009,6 +1150,41 @@ def _execute_steps(decision, state, registry, ctx):
         if skill_name == "ignore":
             results.append({"skill": skill_name, "result": {"success": True}})
             continue
+
+        # V12: 执行层权限检查（三级拦截）
+        meta = all_metadata.get(skill_name, {})
+        vis = meta.get("visibility", "public")
+
+        # 1) private Skill → 非管理员完全不透露存在
+        if vis == "private" and not ctx.is_admin:
+            _log(f"[Brain] Step {i}: {skill_name} 是 private，用户 {ctx.user_id} 无权限")
+            results.append({"skill": skill_name, "result": {
+                "success": False,
+                "reply_override": "我目前没有这个功能哦~ 如果你想管理待办或记笔记，随时告诉我~"
+            }})
+            continue
+
+        # 2) preview Skill → 显示"敬请期待"
+        if vis == "preview" and not ctx.is_admin:
+            preview_msg = meta.get("preview_message",
+                                   "该功能即将在订阅版上线，敬请期待~ 目前你可以用文字描述给我，我一样能帮到你~")
+            _log(f"[Brain] Step {i}: {skill_name} 是 preview，返回预告")
+            results.append({"skill": skill_name, "result": {
+                "success": False,
+                "reply_override": preview_msg
+            }})
+            continue
+
+        # 3) 用户级黑白名单
+        if not ctx.is_skill_allowed(skill_name):
+            _log(f"[Brain] Step {i}: {skill_name} 被用户 {ctx.user_id} 禁用")
+            results.append({"skill": skill_name, "result": {
+                "success": False,
+                "reply_override": f"「{skill_name.split('.')[0]}」功能未开启，你可以说「开启{skill_name.split('.')[0]}」来启用~"
+            }})
+            continue
+
+        handler = registry.get(skill_name)
         if not handler:
             _log(f"[Brain] Step {i}: 未知 skill {skill_name}")
             results.append({"skill": skill_name, "result": {"success": False, "error": f"未知 skill: {skill_name}"}})
@@ -1029,12 +1205,19 @@ def _execute_steps(decision, state, registry, ctx):
 
 def _resolve_reply(user_text, decision, steps, step_results):
     """
-    V4: 智能回复路由。
+    V4+V12: 智能回复路由。
     简单 skill → 直接用 decision.reply 或 skill.reply
     复杂场景 → Flash 二次加工
+    V12: reply_override 优先（执行层权限拦截时使用）
     """
     all_skills = [s.get("skill", "ignore") for s in steps]
     llm_reply = decision.get("reply")
+
+    # V12: 检查是否有 reply_override（执行层权限拦截）
+    for sr in step_results:
+        r = sr.get("result", {})
+        if isinstance(r, dict) and r.get("reply_override"):
+            return r["reply_override"]
 
     # 快速路径 1：ignore（纯闲聊），LLM 的 reply 就是最终回复
     if all_skills == ["ignore"] and llm_reply:
