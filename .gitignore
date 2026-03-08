@@ -8,6 +8,9 @@ src/.env
 my_life/
 data/
 
+# 自动下载的二进制工具（cloudflared 等）
+bin/
+
 # Python
 __pycache__/
 *.py[cod]

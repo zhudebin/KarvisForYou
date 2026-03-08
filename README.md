@@ -182,35 +182,17 @@ Token 和 EncodingAESKey 填 `.env` 里的值，点保存 ✅
 
 ---
 
-下面是回调地址的三种来源（**app.py 启动后会自动判断并打印，不需要你手动操作**）：
+**app.py 会自动处理一切**，不需要你手动安装或操作任何内网穿透工具：
 
-| 你的环境 | app.py 会自动做什么 | 你只需要 |
+| 你的环境 | app.py 自动做什么 | 你只需要 |
 |---|---|---|
-| 有公网 IP 的服务器 | 检测到公网 IP，直接生成 `http://IP:9000/wework` | 复制地址到企微后台，并配**企业可信 IP** |
-| 本地电脑（已装 cloudflared） | **自动启动 cloudflared 隧道**，生成公网地址 | 复制地址到企微后台 |
-| 本地电脑（未装 cloudflared） | 提示你安装 cloudflared | 先装 cloudflared，再重启 app.py |
+| 有公网 IP 的服务器 | 检测到公网 IP，直接生成回调地址 | 复制地址到企微后台，并配**企业可信 IP** |
+| 本地电脑（Mac / Windows / Linux） | **自动下载 cloudflared → 自动启动隧道 → 生成公网地址** | 复制地址到企微后台 |
 
 > **⚠️ 有公网 IP 的服务器：别忘了配企业可信 IP**（应用详情 → 企业可信 IP → 填你的服务器公网 IP）。不配这个，Karvis 能收消息但**发不出去**。
-
-#### 本地开发需要安装 cloudflared（一次性操作）
-
-如果你在本地电脑运行（没有公网 IP），需要先安装 cloudflared。**安装一次后，以后每次启动 app.py 都会自动创建隧道，不需要手动操作**：
-
-```bash
-# Mac
-brew install cloudflared
-
-# Ubuntu/Debian
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install cloudflared
-
-# Windows
-# 下载 https://github.com/cloudflare/cloudflared/releases/latest 放到 PATH 中
-```
-
-安装好后，**直接启动 `python3 app.py`**，它会自动启动隧道并打印回调地址。
-
+>
+> 💡 本地电脑首次启动会自动下载 cloudflared（约 30MB），下载后保存在项目 `bin/` 目录，之后启动无需重复下载。
+>
 > ⚠️ 免费隧道地址每次重启会变。想要固定地址，可以登录 Cloudflare 创建命名隧道（仍然免费），详见 [Cloudflare 文档](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)。
 
 #### 验证连接
