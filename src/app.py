@@ -2053,7 +2053,142 @@ def _init_system_dirs():
     _log(f"[Init] 系统目录已就绪: {SYSTEM_DIR}")
 
 
+def _detect_callback_url():
+    """
+    启动后自动检测并打印企微回调地址。
+    优先级: WEB_DOMAIN 环境变量 > 公网 IP > localhost
+    如果检测到本地环境，尝试自动启动 cloudflared 隧道。
+    """
+    import subprocess, shutil, re
+
+    web_domain = os.environ.get("WEB_DOMAIN", "").strip()
+    tunnel_process = None
+
+    # --- 1. 如果已经配了 WEB_DOMAIN，直接用 ---
+    if web_domain:
+        scheme = "https" if ":" not in web_domain or web_domain.startswith("https") else "http"
+        if "://" in web_domain:
+            callback_url = f"{web_domain}/wework"
+        else:
+            callback_url = f"{scheme}://{web_domain}/wework"
+        _print_callback_banner(callback_url, source="WEB_DOMAIN")
+        return tunnel_process
+
+    # --- 2. 尝试获取公网 IP ---
+    public_ip = None
+    try:
+        resp = requests.get("https://ifconfig.me", timeout=5, headers={"User-Agent": "curl/7.0"})
+        if resp.status_code == 200:
+            public_ip = resp.text.strip()
+    except Exception:
+        try:
+            resp = requests.get("https://ipinfo.io/ip", timeout=5)
+            if resp.status_code == 200:
+                public_ip = resp.text.strip()
+        except Exception:
+            pass
+
+    # --- 3. 判断是否是服务器环境（有公网 IP 且端口可达） ---
+    if public_ip:
+        # 简单检测：看看是不是典型的公网 IP（排除 10.x, 172.16-31.x, 192.168.x）
+        is_public = not any(public_ip.startswith(p) for p in
+                           ["10.", "172.16.", "172.17.", "172.18.", "172.19.",
+                            "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
+                            "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
+                            "172.30.", "172.31.", "192.168.", "127."])
+        if is_public:
+            callback_url = f"http://{public_ip}:{SERVER_PORT}/wework"
+            _print_callback_banner(callback_url, source="公网 IP", public_ip=public_ip)
+            return tunnel_process
+
+    # --- 4. 本地环境：尝试启动 cloudflared ---
+    cloudflared_path = shutil.which("cloudflared")
+    if cloudflared_path:
+        _log("[Tunnel] 检测到本地环境，正在启动 cloudflared 隧道...")
+        try:
+            tunnel_process = subprocess.Popen(
+                [cloudflared_path, "tunnel", "--url", f"http://localhost:{SERVER_PORT}"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1
+            )
+            # 等待隧道 URL 出现（最多 30 秒）
+            tunnel_url = None
+            import select
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                line = tunnel_process.stdout.readline()
+                if not line:
+                    time.sleep(0.5)
+                    continue
+                match = re.search(r'(https://[a-z0-9-]+\.trycloudflare\.com)', line)
+                if match:
+                    tunnel_url = match.group(1)
+                    break
+
+            if tunnel_url:
+                callback_url = f"{tunnel_url}/wework"
+                # 自动更新 PROCESS_ENDPOINT_URL（确保异步回调能走通）
+                os.environ["PROCESS_ENDPOINT_URL"] = f"{tunnel_url}/process"
+                _print_callback_banner(callback_url, source="Cloudflare Tunnel", tunnel_url=tunnel_url)
+            else:
+                _log("[Tunnel] ⚠️ 隧道启动超时，请手动检查 cloudflared")
+                _print_callback_banner(f"http://localhost:{SERVER_PORT}/wework",
+                                      source="本地（隧道未就绪）")
+        except Exception as e:
+            _log(f"[Tunnel] cloudflared 启动失败: {e}")
+            _print_callback_banner(f"http://localhost:{SERVER_PORT}/wework",
+                                  source="本地（无隧道）")
+    else:
+        _log("[Tunnel] 未找到 cloudflared，本地环境无法接收企微回调")
+        _log("[Tunnel] 安装方法: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+        _print_callback_banner(f"http://localhost:{SERVER_PORT}/wework",
+                              source="本地（需安装 cloudflared）")
+
+    return tunnel_process
+
+
+def _print_callback_banner(callback_url, source="", public_ip=None, tunnel_url=None):
+    """打印醒目的回调地址横幅"""
+    border = "═" * 62
+    print(flush=True)
+    print(f"╔{border}╗")
+    print(f"║  🚀 Karvis 已启动！                                          ║")
+    print(f"╠{border}╣")
+    print(f"║                                                              ║")
+    print(f"║  📋 企业微信回调地址（复制到企微后台 → 接收消息 → URL）：     ║")
+    print(f"║                                                              ║")
+    # 居中显示 URL
+    url_line = f"  {callback_url}"
+    print(f"║{url_line:<62}║")
+    print(f"║                                                              ║")
+    if public_ip:
+        ip_line = f"  ⚠️ 别忘了配「企业可信 IP」: {public_ip}"
+        print(f"║{ip_line:<62}║")
+        print(f"║                                                              ║")
+    if tunnel_url:
+        note = "  💡 隧道地址重启会变，固定地址请用命名隧道"
+        print(f"║{note:<62}║")
+        print(f"║                                                              ║")
+    source_line = f"  (来源: {source})"
+    print(f"║{source_line:<62}║")
+    print(f"╚{border}╝")
+    print(flush=True)
+
+
 if __name__ == '__main__':
     _init_system_dirs()
     _setup_builtin_scheduler()
-    app.run(host='0.0.0.0', port=SERVER_PORT, threaded=True)
+
+    # 启动后延迟 2 秒检测回调地址（等 Flask 端口就绪）
+    _tunnel_proc = None
+    def _delayed_detect():
+        global _tunnel_proc
+        time.sleep(2)
+        _tunnel_proc = _detect_callback_url()
+    threading.Thread(target=_delayed_detect, daemon=True).start()
+
+    try:
+        app.run(host='0.0.0.0', port=SERVER_PORT, threaded=True)
+    finally:
+        if _tunnel_proc:
+            _tunnel_proc.terminate()
